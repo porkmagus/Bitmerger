@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bitwarden Deduplication Report</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --fg: #c9d1d9;
+    --border: #30363d;
+    --card: #161b22;
+    --red: #f85149;
+    --green: #3fb950;
+    --yellow: #d29922;
+    --blue: #58a6ff;
+    --muted: #8b949e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2rem;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    line-height: 1.6;
+  }
+  h1 { margin-top: 0; color: var(--blue); }
+  .info-header { color: var(--muted); }
+  .summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 1rem;
+    margin-bottom: 2rem;
+  }
+  .stat {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    text-align: center;
+  }
+  .stat .number { font-size: 2rem; font-weight: 700; display: block; }
+  .stat .label { font-size: .85rem; color: var(--muted); }
+  .cluster {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.25rem;
+    margin-bottom: 1.5rem;
+  }
+  .cluster-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: .5rem;
+  }
+  .cluster-title { font-weight: 600; color: var(--yellow); }
+  .badge {
+    font-size: .75rem;
+    padding: .2rem .5rem;
+    border-radius: 999px;
+    background: var(--border);
+    color: var(--muted);
+  }
+  .items { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 800px) { .items { grid-template-columns: 1fr; } }
+  .col-title { font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-bottom: .5rem; }
+  .item-card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: .75rem;
+    font-size: .9rem;
+  }
+  .item-card.kept { border-color: var(--green); }
+  .item-card.removed { border-color: var(--red); opacity: .85; }
+  .field { margin: .25rem 0; }
+  .field-key { color: var(--muted); font-size: .75rem; text-transform: uppercase; }
+  .field-value { word-break: break-word; }
+  .highlight-add { background: rgba(63,185,80,.15); color: var(--green); padding: 0 .25rem; border-radius: 3px; }
+  .highlight-del { background: rgba(248,81,73,.15); color: var(--red); padding: 0 .25rem; border-radius: 3px; }
+  .uri-list { list-style: none; padding: 0; margin: .25rem 0; }
+  .uri-list li { font-size: .85rem; color: var(--muted); }
+  .uri-list li.new { color: var(--green); }
+  .merge-details { margin-top: .75rem; padding-top: .75rem; border-top: 1px solid var(--border); font-size: .85rem; }
+  .merge-details ul { margin: .25rem 0; padding-left: 1.25rem; }
+  .footer { margin-top: 3rem; text-align: center; color: var(--muted); font-size: .8rem; }
+</style>
+</head>
+<body>
+<h1>Bitwarden Deduplication Report</h1>
+<p class="info-header">Generated {{ timestamp }} &middot; Threshold {{ threshold }} &middot; File {{ filename }}</p>
+
+<div class="summary">
+  <div class="stat"><span class="number">{{ stats.original }}</span><span class="label">Original Items</span></div>
+  <div class="stat"><span class="number">{{ stats.final }}</span><span class="label">Final Items</span></div>
+  <div class="stat"><span class="number">{{ stats.merged }}</span><span class="label">Merged Away</span></div>
+  <div class="stat"><span class="number">{{ stats.clusters }}</span><span class="label">Clusters</span></div>
+</div>
+
+{% for cluster in clusters %}
+<div class="cluster">
+  <div class="cluster-header">
+    <span class="cluster-title">Cluster #{{ cluster.id }} &mdash; {{ cluster.primary_name }}</span>
+    <span class="badge">{{ cluster.members | length }} items &rarr; 1</span>
+  </div>
+  <div class="items">
+    <div>
+      <div class="col-title">Before (Duplicates)</div>
+      {% for item in cluster.members %}
+      <div class="item-card {{ 'removed' if item.id != cluster.primary_id else 'kept' }}">
+        <div class="field"><div class="field-key">Name</div><div class="field-value">{{ item.name }}</div></div>
+        <div class="field"><div class="field-key">User</div><div class="field-value">{{ item.username or "(none)" }}</div></div>
+        <div class="field"><div class="field-key">Password</div><div class="field-value">{{ item.password_mask }}</div></div>
+        <div class="field"><div class="field-key">Domain</div><div class="field-value">{{ item.domain or "(none)" }}</div></div>
+        {% if item.notes %}
+        <div class="field"><div class="field-key">Notes</div><div class="field-value">{{ item.notes[:200] }}{% if item.notes | length > 200 %}...{% endif %}</div></div>
+        {% endif %}
+        {% if item.uris %}
+        <ul class="uri-list">{% for uri in item.uris %}<li>{{ uri }}</li>{% endfor %}</ul>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    <div>
+      <div class="col-title">After (Merged Primary)</div>
+      <div class="item-card kept">
+        <div class="field"><div class="field-key">Name</div><div class="field-value">{{ cluster.primary_name }}</div></div>
+        <div class="field"><div class="field-key">User</div><div class="field-value">{{ cluster.primary_username or "(none)" }}</div></div>
+        <div class="field"><div class="field-key">Password</div><div class="field-value">{{ cluster.primary_password_mask }}</div></div>
+        <div class="field"><div class="field-key">Domain</div><div class="field-value">{{ cluster.primary_domain or "(none)" }}</div></div>
+        {% if cluster.primary_notes %}
+        <div class="field"><div class="field-key">Notes</div><div class="field-value">{{ cluster.primary_notes[:300] }}{% if cluster.primary_notes | length > 300 %}...{% endif %}</div></div>
+        {% endif %}
+        {% if cluster.primary_uris %}
+        <ul class="uri-list">{% for uri in cluster.primary_uris %}<li class="{{ 'new' if uri in cluster.new_uris else '' }}">{{ uri }}</li>{% endfor %}</ul>
+        {% endif %}
+      </div>
+      <div class="merge-details">
+        <strong>Changes:</strong>
+        <ul>{% if cluster.new_uris %}<li>+<span class="highlight-add">{{ cluster.new_uris | length }} URI(s)</span> merged</li>{% endif %}{% if cluster.backfilled.totp %}<li><span class="highlight-add">TOTP</span> backfilled</li>{% endif %}{% if cluster.backfilled.username %}<li><span class="highlight-add">Username</span> backfilled</li>{% endif %}{% if cluster.backfilled.password %}<li><span class="highlight-add">Password</span> backfilled</li>{% endif %}{% if cluster.backfilled.notes %}<li><span class="highlight-add">Notes</span> concatenated</li>{% endif %}{% if cluster.backfilled.favorite %}<li><span class="highlight-add">Favorite</span> flag kept</li>{% endif %}{% if cluster.backfilled.fields %}<li><span class="highlight-add">{{ cluster.backfilled.fields }} custom field(s)</span> merged</li>{% endif %}{% if cluster.backfilled.history %}<li><span class="highlight-add">Password history</span> merged</li>{% endif %}{% if cluster.backfilled.passkeys %}<li><span class="highlight-add">{{ cluster.backfilled.passkeys }} passkey(s)</span> merged</li>{% endif %}</ul>
+      </div>
+    </div>
+  </div>
+</div>
+{% endfor %}
+
+<div class="footer">
+  Generated by bw_dedup.py &middot; Import the cleaned JSON via Bitwarden Tools &rarr; Import Data
+</div>
+</body>
+</html>

@@ -1,0 +1,6 @@
+click>=8.0
+rich>=13.0
+tldextract>=5.0
+thefuzz>=0.22
+python-Levenshtein>=0.25
+jinja2>=3.0

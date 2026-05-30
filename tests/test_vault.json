@@ -1,0 +1,58 @@
+{
+  "encrypted": false,
+  "folders": [
+    {"id": "11111111-1111-1111-1111-111111111111", "name": "Social"}
+  ],
+  "items": [
+    {
+      "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      "type": 1,
+      "name": "GitHub",
+      "notes": "Main account",
+      "favorite": false,
+      "login": {
+        "uris": [{"match": null, "uri": "https://github.com/login"}],
+        "username": "sean",
+        "password": "supersecret123",
+        "totp": null
+      },
+      "folderId": "11111111-1111-1111-1111-111111111111"
+    },
+    {
+      "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+      "type": 1,
+      "name": "GitHub",
+      "notes": null,
+      "favorite": false,
+      "login": {
+        "uris": [{"match": null, "uri": "https://www.github.com/login"}],
+        "username": "sean",
+        "password": "supersecret123",
+        "totp": "otpauth://totp/github"
+      },
+      "folderId": null
+    },
+    {
+      "id": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+      "type": 1,
+      "name": "GitHub Old",
+      "notes": null,
+      "favorite": false,
+      "login": {
+        "uris": [{"match": null, "uri": "https://github.com/login"}],
+        "username": "sean",
+        "password": "supersecret123",
+        "totp": null
+      },
+      "folderId": null
+    },
+    {
+      "id": "dddddddd-dddd-dddd-dddd-dddddddddddd",
+      "type": 2,
+      "name": "Secure Note",
+      "notes": "This is a secure note.",
+      "favorite": false,
+      "secureNote": {"type": 0}
+    }
+  ]
+}

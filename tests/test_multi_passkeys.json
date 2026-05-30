@@ -1,0 +1,35 @@
+{
+  "encrypted": false,
+  "folders": [],
+  "items": [
+    {
+      "id": "pk1",
+      "type": 1,
+      "name": "GitHub",
+      "login": {
+        "uris": [{"uri": "https://github.com/login"}],
+        "username": "sean",
+        "password": "pw1",
+        "totp": "otpauth://totp/github",
+        "fido2Credentials": [
+          {"credentialId": "yubikey-abc", "keyType": "public-key", "counter": 1},
+          {"credentialId": "iphone-faceid", "keyType": "public-key", "counter": 5}
+        ]
+      }
+    },
+    {
+      "id": "pk2",
+      "type": 1,
+      "name": "GitHub",
+      "login": {
+        "uris": [{"uri": "https://github.com/login"}],
+        "username": "sean",
+        "password": "pw1",
+        "fido2Credentials": [
+          {"credentialId": "iphone-faceid", "keyType": "public-key", "counter": 5},
+          {"credentialId": "windows-hello", "keyType": "public-key", "counter": 2}
+        ]
+      }
+    }
+  ]
+}

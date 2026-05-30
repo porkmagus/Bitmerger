@@ -1,0 +1,30 @@
+{
+  "encrypted": false,
+  "folders": [],
+  "items": [
+    {
+      "id": "p1",
+      "type": 1,
+      "name": "GitHub",
+      "login": {
+        "uris": [{"uri": "https://github.com/login"}],
+        "username": "sean",
+        "password": "pw1",
+        "totp": "otpauth://totp/github"
+      }
+    },
+    {
+      "id": "p2",
+      "type": 1,
+      "name": "GitHub",
+      "login": {
+        "uris": [{"uri": "https://github.com/login"}],
+        "username": "sean",
+        "password": "pw1",
+        "fido2Credentials": [
+          {"credentialId": "cred-abc-123", "keyType": "public-key"}
+        ]
+      }
+    }
+  ]
+}

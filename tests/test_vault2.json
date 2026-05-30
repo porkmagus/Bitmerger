@@ -1,0 +1,106 @@
+{
+  "encrypted": false,
+  "folders": [],
+  "items": [
+    {
+      "id": "a1",
+      "type": 1,
+      "name": "GitHub",
+      "login": {
+        "uris": [{"uri": "https://github.com/login"}],
+        "username": "sean",
+        "password": "pw1"
+      }
+    },
+    {
+      "id": "a2",
+      "type": 1,
+      "name": "GitHub Old",
+      "login": {
+        "uris": [{"uri": "https://www.github.com/login"}],
+        "username": "sean",
+        "password": "pw1"
+      }
+    },
+    {
+      "id": "a3",
+      "type": 1,
+      "name": "GitHub",
+      "login": {
+        "uris": [{"uri": "https://github.com/login"}],
+        "username": "sean",
+        "password": "pw2"
+      }
+    },
+    {
+      "id": "b1",
+      "type": 1,
+      "name": "Twitter",
+      "login": {
+        "uris": [{"uri": "https://twitter.com/login"}],
+        "username": "sean",
+        "password": "pw1"
+      }
+    },
+    {
+      "id": "b2",
+      "type": 1,
+      "name": "Twitter",
+      "login": {
+        "uris": [{"uri": "https://x.com/login"}],
+        "username": "sean",
+        "password": "pw1"
+      }
+    },
+    {
+      "id": "c1",
+      "type": 1,
+      "name": "Netflix",
+      "login": {
+        "uris": [{"uri": "https://netflix.com/login"}],
+        "username": "sean",
+        "password": "pw3"
+      }
+    },
+    {
+      "id": "c2",
+      "type": 1,
+      "name": "Netflix",
+      "login": {
+        "uris": [{"uri": "https://netflix.com/login"}],
+        "username": "sean",
+        "password": "pw3"
+      }
+    },
+    {
+      "id": "d1",
+      "type": 1,
+      "name": "Amazon",
+      "login": {
+        "uris": [{"uri": "https://amazon.com/login"}],
+        "username": "sean2",
+        "password": "pw4"
+      }
+    },
+    {
+      "id": "d2",
+      "type": 1,
+      "name": "Amazon",
+      "login": {
+        "uris": [{"uri": "https://amazon.com/login"}],
+        "username": "sean2",
+        "password": "pw4"
+      }
+    },
+    {
+      "id": "d3",
+      "type": 1,
+      "name": "Amazon",
+      "login": {
+        "uris": [{"uri": "https://amazon.com/login"}],
+        "username": "sean2",
+        "password": "pw5"
+      }
+    }
+  ]
+}

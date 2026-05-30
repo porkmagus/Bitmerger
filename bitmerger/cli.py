@@ -4,10 +4,11 @@ Bitmerger CLI: deduplication and batch rename commands.
 Backward-compatible: ``python bw_dedup.py vault.json`` still routes to dedup.
 """
 
+import json
 import sys
 import time
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Set
+from typing import Optional, List, Dict, Any
 
 import click
 from rich.console import Console
@@ -20,7 +21,7 @@ from .core import (
     BwItem, ClusterInfo, MergeRecord,
     normalize_domain, clean_uri,
     find_duplicates_by_type, cluster_confidence, pick_primary,
-    merge_items, build_proposed_records,
+    merge_items, build_proposed_records, _accumulate_backfill,
     create_backup, create_merge_log, generate_html_report,
     parse_search_query, filter_items_by_name, create_rename_log,
     load_vault, save_vault,
@@ -241,7 +242,6 @@ def dedup(
                         if c.login:
                             all_new_uris.extend([clean_uri(u.uri) for u in c.login.uris])
                     else:
-                        from .core import _accumulate_backfill
                         _accumulate_backfill(all_backfilled, {k: v})
 
         seen: set[str] = {clean_uri(u.uri).lower() for u in primary.login.uris} if primary.login else set()
@@ -286,7 +286,6 @@ def dedup(
         console.print(f"\n[dim]Backup created: {backup}")
 
     with open(output_path, "w", encoding="utf-8") as f:
-        import json
         json.dump(out_data, f, indent=2, ensure_ascii=False)
     console.print(f"\n[bold green]Wrote clean export to[/] {output_path}")
 

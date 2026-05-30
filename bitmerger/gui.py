@@ -6,27 +6,25 @@ Usage:
     python -m bitmerger --gui
 """
 
-import json
 import sys
 from pathlib import Path
 from typing import Any, Optional, List
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QPushButton, QLineEdit, QCheckBox, QComboBox, QSpinBox,
-    QDoubleSpinBox, QFileDialog, QMessageBox, QProgressBar, QTabWidget,
-    QGroupBox, QTableWidget, QTableWidgetItem, QTextEdit, QSplitter,
-    QHeaderView, QRadioButton, QButtonGroup, QScrollArea, QFrame,
-    QSizePolicy, QStackedWidget,
+    QLabel, QPushButton, QLineEdit, QCheckBox, QDoubleSpinBox,
+    QFileDialog, QMessageBox, QProgressBar, QTabWidget,
+    QGroupBox, QTableWidget, QTableWidgetItem, QTextEdit,
+    QHeaderView,
 )
-from PySide6.QtGui import QFont, QIcon, QPalette, QColor
+from PySide6.QtGui import QFont, QIcon
 
 from .core import (
     BwItem, ClusterInfo, MergeRecord,
     normalize_domain, clean_uri,
     find_duplicates_by_type, cluster_confidence, pick_primary,
-    merge_items, build_proposed_records,
+    merge_items, build_proposed_records, _accumulate_backfill,
     create_backup, create_merge_log, generate_html_report,
     parse_search_query, filter_items_by_name, create_rename_log,
     load_vault, save_vault,
@@ -611,7 +609,6 @@ class MainWindow(QMainWindow):
                                 if c.login:
                                     all_new_uris.extend([clean_uri(u.uri) for u in c.login.uris])
                             else:
-                                from .core import _accumulate_backfill
                                 _accumulate_backfill(all_backfilled, {k: v})
 
                 seen: set[str] = {clean_uri(u.uri).lower() for u in primary.login.uris} if primary.login else set()

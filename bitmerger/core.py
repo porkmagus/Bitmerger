@@ -9,7 +9,6 @@ import json
 import re
 import shutil
 import string
-import time
 import urllib.parse
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -285,7 +284,7 @@ def normalize_domain(uri: str) -> str:
         parsed = urllib.parse.urlparse(uri)
         host = parsed.hostname or uri
         extracted = tldextract.extract(host)
-        domain = getattr(extracted, "top_domain_under_public_suffix", None) or getattr(extracted, "registered_domain", "")
+        domain = getattr(extracted, "top_domain_under_public_suffix", None) or getattr(extracted, "domain", "")
         if domain:
             return domain.lower()
         return host.lower()

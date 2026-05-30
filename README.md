@@ -2,12 +2,15 @@
 
 > **Intelligent, safe deduplication for Bitwarden vaults.**  
 > Auto-merge duplicate entries with confidence scoring. One command. Zero data loss.
+> **Now with a cross-platform GUI and batch rename tools.**
 
 ---
 
 ## Table of Contents
 - [What It Does](#what-it-does)
 - [Quick Start](#quick-start)
+- [GUI Mode](#gui-mode)
+- [Batch Rename](#batch-rename)
 - [Safety Guarantees](#safety-guarantees)
 - [Usage & Options](#usage--options)
 - [How It Works](#how-it-works)
@@ -87,7 +90,41 @@ python3 bw_dedup.py vault.json
 
 ---
 
-## 🛡️ Safety Guarantees
+## 🖥️ GUI Mode
+
+Launch the polished desktop GUI:
+
+```bash
+python3 -m bitmerger --gui
+# or
+python3 bw_dedup.py --gui
+```
+
+**Features:**
+- **Vault Overview** — Browse all items in a sortable table
+- **Deduplicate** — Point-and-click settings, analyze, preview, then execute
+- **Batch Rename** — Search and standardize item names with mouse clicks
+- **Progress bars** and **confirmation dialogs** for every destructive action
+- **Cross-platform** — Works on macOS, Windows, and Linux
+
+---
+
+## 🏷️ Batch Rename
+
+Standardize messy vault names (e.g., `google.com`, `mail.google.com`, `accounts.google.com` → `Google`):
+
+```bash
+python3 bw_dedup.py batch-rename vault.json --search "google+mail.google" --replace "Google" --yes
+```
+
+| Option | Description |
+|--------|-------------|
+| `--search` | Query with `+` for OR: `microsoft+live.com` |
+| `--replace` | New name for all matched items |
+| `--types` | Limit to item types (e.g., `1` for logins only) |
+| `--dry-run` | Preview matches without writing |
+| `--yes` | Skip confirmation |
+| `--no-backup` | Skip backup creation |
 
 Every merge is safe. Nothing is ever deleted.
 
@@ -265,7 +302,7 @@ Small vaults are instant. Larger vaults are still fast.
 
 ## 🧪 Testing
 
-Run the comprehensive test suite (35 tests):
+Run the comprehensive test suite (55 tests):
 
 ```bash
 python3 -m unittest discover -s tests -p "test_*.py" -v
@@ -282,6 +319,9 @@ python3 -m unittest discover -s tests -p "test_*.py" -v
 - Round-trip serialization
 - Backup and merge log generation
 - HTML report generation
+- Batch rename query parsing and matching
+- Rename log generation
+- End-to-end integration tests
 
 All tests pass with **0 type checking errors**.
 
@@ -319,16 +359,22 @@ Once deduplication is complete:
 
 ```
 bitmerger/
-├── bw_dedup.py              # Core deduplication engine + CLI
-├── requirements.txt         # Python dependencies
-├── .gitignore               # Git ignore rules
-├── README.md                # This file
-├── templates/
-│   └── report.jinja2        # HTML report template (Jinja2)
-├── tests/
+├── bw_dedup.py              # Backward-compatible entry point
+├── bitmerger/
 │   ├── __init__.py
-│   └── test_engine.py       # 35 comprehensive tests
-└── stress_test.py           # Synthetic vault generator (for testing)
+│   ├── __main__.py          # python -m bitmerger
+│   ├── core.py              # Engine: models, similarity, merging
+│   ├── cli.py               # CLI commands (dedup, batch-rename)
+│   ├── gui.py               # PySide6 desktop GUI
+│   └── templates/
+│       └── report.jinja2    # HTML report template
+├── requirements.txt         # Python dependencies
+├── .gitignore
+├── README.md
+├── tests/
+│   ├── test_engine.py       # 35 core engine tests
+│   └── test_batch_rename.py # 20 batch-rename tests
+└── stress_test.py           # Synthetic vault generator
 ```
 
 ---
@@ -362,10 +408,16 @@ pip install -r requirements.txt
 - **Jinja2** — HTML report templating
 - **thefuzz** — Fuzzy string matching
 - **tldextract** — Domain extraction
+- **PySide6** — Cross-platform GUI (Qt for Python)
 
 All specified in `requirements.txt`. Install with:
 ```bash
 pip install -r requirements.txt
+```
+
+**GUI only:** If you only need the CLI, you can skip PySide6:
+```bash
+pip install click rich jinja2 thefuzz tldextract python-Levenshtein
 ```
 
 ---

@@ -11,7 +11,7 @@ from typing import Any
 # Ensure we import the local module
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from bw_dedup import (
+from bitmerger.core import (
     BwItem, LoginData, UriEntry, SshKeyData,
     normalize_text, normalize_domain, clean_uri,
     fuzzy_name_similarity, login_similarity, item_similarity,

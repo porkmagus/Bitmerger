@@ -10,10 +10,10 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from bw_dedup import (
+from bitmerger.core import (
     BwItem, LoginData, UriEntry,
     parse_search_query, item_matches_terms, filter_items_by_name,
-    create_rename_log, show_rename_preview,
+    create_rename_log,
 )
 
 

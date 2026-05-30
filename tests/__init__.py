@@ -1,1 +1,1 @@
-"""Tests for bw_dedup."""
+# tests package

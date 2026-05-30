@@ -3,8 +3,8 @@
 import json
 import random
 import string
-import time
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 DOMAINS = [
     "github.com", "google.com", "amazon.com", "twitter.com", "x.com",
@@ -31,24 +31,24 @@ NAMES = [
     "Secondary", "Primary", "Dev", "Staging", "Prod", "Test", "Demo",
 ]
 
-def rand_str(n=8):
+def rand_str(n: int = 8) -> str:
     return ''.join(random.choices(string.ascii_lowercase + string.digits, k=n))
 
-def make_item(i, duplicate_of=None):
+def make_item(i: int, duplicate_of: Optional[int] = None) -> Dict[str, Any]:
     """Generate a login item. If duplicate_of is set, create a variant."""
     if duplicate_of is not None:
-        base = DOMAINS[duplicate_of % len(DOMAINS)]
-        name = NAMES[duplicate_of % len(NAMES)]
+        base: str = DOMAINS[duplicate_of % len(DOMAINS)]
+        name: str = NAMES[duplicate_of % len(NAMES)]
         username = f"user{duplicate_of % 200}"
         password = f"password{duplicate_of % 500}"
         # Create variation: www subdomain, different URI path, or name suffix
-        variants = [
+        variants: list[Dict[str, str]] = [
             {"uri": f"https://{base}/login", "name": name},
             {"uri": f"https://www.{base}/login", "name": f"{name} Old"},
             {"uri": f"https://{base}/signin", "name": f"{name} Work"},
             {"uri": f"https://app.{base}/auth", "name": f"{name} Dev"},
         ]
-        v = variants[i % len(variants)]
+        v: Dict[str, str] = variants[i % len(variants)]
         return {
             "id": f"item-{i:05d}",
             "type": 1,
@@ -77,11 +77,10 @@ def make_item(i, duplicate_of=None):
             }
         }
 
-def generate_vault(n_items=5000, dup_ratio=0.3):
+def generate_vault(n_items: int = 5000, dup_ratio: float = 0.3) -> Dict[str, Any]:
     """Generate vault with dup_ratio% duplicates."""
-    items = []
+    items: list[Dict[str, Any]] = []
     unique_count = int(n_items * (1 - dup_ratio))
-    dup_count = n_items - unique_count
     
     # Generate unique items
     for i in range(unique_count):
@@ -93,7 +92,7 @@ def generate_vault(n_items=5000, dup_ratio=0.3):
     while i < n_items:
         base = dup_idx % unique_count
         copies = random.randint(2, 4)
-        for c in range(copies):
+        for _ in range(copies):
             if i >= n_items:
                 break
             items.append(make_item(i, duplicate_of=base))
@@ -101,7 +100,7 @@ def generate_vault(n_items=5000, dup_ratio=0.3):
         dup_idx += 1
     
     random.shuffle(items)
-    
+
     return {
         "encrypted": False,
         "folders": [],
@@ -109,10 +108,11 @@ def generate_vault(n_items=5000, dup_ratio=0.3):
     }
 
 if __name__ == "__main__":
-    sizes = [500, 1000, 2000, 5000]
+    sizes: list[int] = [500, 1000, 2000, 5000]
     for size in sizes:
-        vault = generate_vault(size, dup_ratio=0.35)
-        path = Path(f"stress_vault_{size}.json")
+        vault: Dict[str, Any] = generate_vault(size, dup_ratio=0.35)
+        path: Path = Path(f"stress_vault_{size}.json")
         with open(path, "w") as f:
             json.dump(vault, f)
-        print(f"Generated {path} with {len(vault['items'])} items")
+        items: Any = vault["items"]
+        print(f"Generated {path} with {len(items)} items")

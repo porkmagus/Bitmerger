@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Smart Bitwarden Vault Deduplicator
+Bitmerger: Smart Vault Deduplicator
 
 Reads a Bitwarden JSON export, identifies duplicates across ALL item types
 (logins, cards, identities, secure notes, SSH keys), merges intelligently,
@@ -32,7 +32,7 @@ from rich.table import Table
 from rich.prompt import Prompt
 from rich.panel import Panel
 from rich.text import Text
-from thefuzz import fuzz  # type: ignore[import-not-found]
+from thefuzz import fuzz  # type: ignore[import-not-found,import-untyped]
 
 console = Console()
 
@@ -949,11 +949,11 @@ def _build_proposed_records(cluster_infos: List[ClusterInfo]) -> List[MergeRecor
                     _accumulate_backfill(all_backfilled, {k: v})
         seen: set[str] = {clean_uri(u.uri).lower() for u in primary.login.uris} if primary.login else set()
         unique_new: list[str] = []
-        for u in all_new_uris:
-            cu = clean_uri(u).lower()
-            if cu not in seen:
-                unique_new.append(u)
-                seen.add(cu)
+        for u_str in all_new_uris:
+            cu_cleaned: str = clean_uri(u_str).lower()
+            if cu_cleaned not in seen:
+                unique_new.append(u_str)
+                seen.add(cu_cleaned)
         records.append(MergeRecord(
             cluster_id=ci.cluster_id + 1,
             primary=primary,
@@ -1098,16 +1098,16 @@ def main(
     # Determine mode
     if report_only or dry_run:
         # Simulate merges for reporting without mutating real items
-        records: List[MergeRecord] = _build_proposed_records(cluster_infos)
-        stats: Dict[str, int] = {
+        proposed_records: List[MergeRecord] = _build_proposed_records(cluster_infos)
+        report_stats: Dict[str, int] = {
             "original": len(all_items),
-            "final": len(all_items) - len(records),
-            "merged": len(records),
+            "final": len(all_items) - len(proposed_records),
+            "merged": len(proposed_records),
             "clusters": len(clusters),
         }
         console.print("\n[bold]Summary[/]")
-        console.print(f"  Original items: {stats['original']}")
-        console.print(f"  Would merge: {stats['merged']} clusters")
+        console.print(f"  Original items: {report_stats['original']}")
+        console.print(f"  Would merge: {report_stats['merged']} clusters")
         console.print(f"  Total time: {time.time() - t0:.2f}s")
         if dry_run:
             console.print("\n[yellow]Dry run — no files written[/]")
@@ -1115,8 +1115,8 @@ def main(
             console.print("\n[yellow]Report only — no output or backup written[/]")
         # Always generate report
         generate_html_report(
-            records=records,
-            stats=stats,
+            records=proposed_records,
+            stats=report_stats,
             threshold=threshold,
             filename=input_path.name,
             output_path=report_path,
@@ -1125,7 +1125,7 @@ def main(
 
     # Build merge plan (real merge)
     merged_away_ids: set[str] = set()
-    records: List[MergeRecord] = []
+    merge_records: List[MergeRecord] = []
 
     for ci in cluster_infos:
         if ci.skipped:
@@ -1147,13 +1147,13 @@ def main(
 
         seen: set[str] = {clean_uri(u.uri).lower() for u in primary.login.uris} if primary.login else set()
         unique_new: list[str] = []
-        for u in all_new_uris:
-            cu = clean_uri(u).lower()
-            if cu not in seen:
-                unique_new.append(u)
-                seen.add(cu)
+        for u_str in all_new_uris:
+            cu_cleaned: str = clean_uri(u_str).lower()
+            if cu_cleaned not in seen:
+                unique_new.append(u_str)
+                seen.add(cu_cleaned)
 
-        records.append(
+        merge_records.append(
             MergeRecord(
                 cluster_id=ci.cluster_id + 1,
                 primary=primary,
@@ -1169,7 +1169,7 @@ def main(
     out_data: Dict[str, Any] = dict(data)
     out_data["items"] = [i.to_dict() for i in final_items]
 
-    stats: Dict[str, int] = {
+    final_stats: Dict[str, int] = {
         "original": len(all_items),
         "final": len(final_items),
         "merged": len(merged_away_ids),
@@ -1177,9 +1177,9 @@ def main(
     }
 
     console.print("\n[bold]Summary[/]")
-    console.print(f"  Original items: {stats['original']}")
-    console.print(f"  Merged away: {stats['merged']}")
-    console.print(f"  Final items: {stats['final']}")
+    console.print(f"  Original items: {final_stats['original']}")
+    console.print(f"  Merged away: {final_stats['merged']}")
+    console.print(f"  Final items: {final_stats['final']}")
     console.print(f"  Total time: {time.time() - t0:.2f}s")
 
     # Backup
@@ -1192,14 +1192,14 @@ def main(
     console.print(f"\n[bold green]Wrote clean export to[/] {output_path}")
 
     # Merge log
-    if records:
-        log_path = create_merge_log(records, output_path)
+    if merge_records:
+        log_path = create_merge_log(merge_records, output_path)
         console.print(f"[dim]Merge log: {log_path}")
 
     # HTML report (always generated)
     generate_html_report(
-        records=records,
-        stats=stats,
+        records=merge_records,
+        stats=final_stats,
         threshold=threshold,
         filename=input_path.name,
         output_path=report_path,
@@ -1209,14 +1209,14 @@ def main(
     console.print(Panel(
         Text.assemble(
             ("Cleaned ", "bold white"),
-            (f"{stats['merged']}", "bold green"),
+            (f"{final_stats['merged']}", "bold green"),
             (" duplicates from ", "bold white"),
-            (f"{stats['original']}", "bold blue"),
+            (f"{final_stats['original']}", "bold blue"),
             (" items.", "bold white"),
             ("\n", ""),
             ("Import back into Bitwarden via: Tools → Import Data → Bitwarden (json)", "dim"),
         ),
-        title="🔐 Deduplication Complete",
+        title="🔐 Bitmerger Complete",
         border_style="green"
     ))
 

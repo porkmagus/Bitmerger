@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Comprehensive unit + integration tests for bw_dedup engine."""
+"""Comprehensive unit + integration tests for Bitmerger engine."""
 
 import json
 import sys

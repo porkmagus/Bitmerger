@@ -1,4 +1,4 @@
-# 🔐 Bitwarden Vault Deduplicator
+# 🔐 Bitmerger
 
 > **Intelligent, safe deduplication for Bitwarden vaults.**  
 > Auto-merge duplicate entries with confidence scoring. One command. Zero data loss.

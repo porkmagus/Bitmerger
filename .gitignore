@@ -46,5 +46,5 @@ Thumbs.db
 
 # Project-specific
 *.original.*.json
-dedup_report.html
+*.report.html
 merge_log.json

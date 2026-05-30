@@ -1345,9 +1345,10 @@ def batch_rename(
         console.print("[yellow]Dry run — no files written.")
         return
 
+    match_ids: set[int] = {id(m) for m in matches}
     renamed: list[tuple[str, str, str]] = []
     for item in all_items:
-        if item in matches:
+        if id(item) in match_ids:
             old_name = item.name
             item.name = replace
             renamed.append((item.id, old_name, replace))

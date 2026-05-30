@@ -14,6 +14,7 @@ import copy
 import json
 import re
 import shutil
+import sys
 import string
 import time
 import urllib.parse
@@ -964,9 +965,69 @@ def _build_proposed_records(cluster_infos: List[ClusterInfo]) -> List[MergeRecor
     return records
 
 
+
+# --- Batch Rename ---
+
+def parse_search_query(query: str) -> list[str]:
+    """Split query by '+' for OR search. Each term is stripped and lowercased."""
+    return [t.strip().lower() for t in query.split("+") if t.strip()]
+
+
+def item_matches_terms(item: BwItem, terms: list[str]) -> bool:
+    """Check if item name contains any of the search terms (case-insensitive)."""
+    name_lower = (item.name or "").lower()
+    return any(term in name_lower for term in terms)
+
+
+def filter_items_by_name(
+    items: list[BwItem],
+    terms: list[str],
+    target_types: set[int],
+) -> list[BwItem]:
+    return [i for i in items if i.type in target_types and item_matches_terms(i, terms)]
+
+
+def show_rename_preview(matches: list[BwItem]) -> None:
+    type_names = {1: "Login", 2: "Note", 3: "Card", 4: "Identity", 5: "SSH"}
+    table = Table(title=f"Matched Items ({len(matches)} found)", show_lines=True)
+    table.add_column("ID", style="dim", no_wrap=True)
+    table.add_column("Type", style="yellow")
+    table.add_column("Current Name")
+    table.add_column("Username", style="cyan")
+    table.add_column("Domain", style="green")
+
+    for item in matches:
+        tname = type_names.get(item.type, "Other")
+        username = ""
+        domain = ""
+        if item.login:
+            username = item.login.username or ""
+            if item.login.uris:
+                domain = normalize_domain(item.login.uris[0].uri) or ""
+        table.add_row(item.id, tname, item.name, username, domain)
+    console.print(table)
+
+
+def create_rename_log(
+    renamed: list[tuple[str, str, str]],
+    output_path: Path,
+) -> Path:
+    log_data: list[dict[str, Any]] = [{"id": rid, "old_name": old, "new_name": new} for rid, old, new in renamed]
+    log_path = output_path.with_suffix(f"{output_path.suffix}.rename-log.json")
+    with open(log_path, "w", encoding="utf-8") as f:
+        json.dump(log_data, f, indent=2, ensure_ascii=False)
+    return log_path
+
+
 # --- Main CLI ---
 
-@click.command()
+@click.group()
+def cli() -> None:
+    """Bitmerger: Bitwarden vault deduplication and batch management."""
+    pass
+
+
+@cli.command()
 @click.argument("input_file", type=click.Path(exists=True, dir_okay=False))
 @click.option("-o", "--output", type=click.Path(), default=None, help="Output JSON path.")
 @click.option("-t", "--threshold", type=float, default=0.85, show_default=True, help="Similarity threshold.")
@@ -977,7 +1038,7 @@ def _build_proposed_records(cluster_infos: List[ClusterInfo]) -> List[MergeRecor
 @click.option("--types", type=str, default="1,2,3,4,5", help="Comma-separated item types to deduplicate.")
 @click.option("--no-backup", is_flag=True, help="Skip creating a backup of the original file.")
 @click.option("--confidence", type=float, default=None, help="Only auto-merge clusters above this confidence (0.0-1.0).")
-def main(
+def dedup(
     input_file: str,
     output: Optional[str],
     threshold: float,
@@ -1221,5 +1282,104 @@ def main(
     ))
 
 
+
+@cli.command(name="batch-rename")
+@click.argument("input_file", type=click.Path(exists=True, dir_okay=False))
+@click.option("-o", "--output", type=click.Path(), default=None, help="Output JSON path.")
+@click.option("--search", required=True, help="Search query. Use + for OR: google+mail.google")
+@click.option("--replace", required=True, help="New name for all matched items")
+@click.option("--yes", is_flag=True, help="Skip confirmation prompt")
+@click.option("--no-backup", is_flag=True, help="Skip creating a backup of the original file")
+@click.option("--types", type=str, default="1,2,3,4,5", help="Comma-separated item types to search")
+@click.option("--dry-run", is_flag=True, help="Preview matches without writing output")
+def batch_rename(
+    input_file: str,
+    output: Optional[str],
+    search: str,
+    replace: str,
+    yes: bool,
+    no_backup: bool,
+    types: str,
+    dry_run: bool,
+) -> None:
+    """Batch rename vault items by name search."""
+    input_path = Path(input_file)
+    output_path = Path(output) if output else input_path.with_suffix(".renamed.json")
+    target_types = set(int(t.strip()) for t in types.split(",") if t.strip().isdigit())
+
+    t0 = time.time()
+    console.print(f"[bold green]Loading[/] {input_path}")
+    with open(input_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    items_raw: list[Any] = data.get("items", [])
+    all_items: list[BwItem] = [BwItem.from_dict(i) for i in items_raw]
+
+    type_names = {1: "Logins", 2: "Notes", 3: "Cards", 4: "Identities", 5: "SSH Keys"}
+    counts_str = ", ".join(f"{type_names.get(t, f'Type{t}')}: {sum(1 for i in all_items if i.type == t)}" for t in sorted(target_types))
+    console.print(f"[bold]Total items:[/] {len(all_items)} [dim]({counts_str})")
+    console.print(f"[dim](loaded in {time.time() - t0:.2f}s)")
+
+    terms = parse_search_query(search)
+    console.print(f"[bold]Search terms:[/] {terms}")
+
+    matches = filter_items_by_name(all_items, terms, target_types)
+    if not matches:
+        console.print("[yellow]No items matched the search query. Nothing to do.")
+        return
+
+    show_rename_preview(matches)
+
+    if not yes:
+        choice = Prompt.ask(
+            f"Rename {len(matches)} item(s) to [bold]{replace}[/]?",
+            default="n",
+            choices=["y", "n"],
+            show_choices=True,
+        )
+        if choice != "y":
+            console.print("[yellow]Cancelled.")
+            return
+
+    if dry_run:
+        console.print("[yellow]Dry run — no files written.")
+        return
+
+    renamed: list[tuple[str, str, str]] = []
+    for item in all_items:
+        if item in matches:
+            old_name = item.name
+            item.name = replace
+            renamed.append((item.id, old_name, replace))
+
+    out_data: dict[str, Any] = dict(data)
+    out_data["items"] = [i.to_dict() for i in all_items]
+
+    if not no_backup:
+        backup = create_backup(input_path)
+        console.print(f"[dim]Backup created: {backup}")
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(out_data, f, indent=2, ensure_ascii=False)
+    console.print(f"[bold green]Wrote renamed export to[/] {output_path}")
+
+    if renamed:
+        log_path = create_rename_log(renamed, output_path)
+        console.print(f"[dim]Rename log: {log_path}")
+
+    console.print(Panel(
+        Text.assemble(
+            ("Renamed ", "bold white"),
+            (f"{len(renamed)}", "bold green"),
+            (" items to ", "bold white"),
+            (f"{replace}", "bold blue"),
+            (".", "bold white"),
+        ),
+        title="🔐 Bitmerger Batch Rename",
+        border_style="green"
+    ))
+
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1 and sys.argv[1] not in ("dedup", "batch-rename", "--help", "-h"):
+        sys.argv.insert(1, "dedup")
+    cli()

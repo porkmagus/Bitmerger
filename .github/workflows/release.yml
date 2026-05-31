@@ -9,6 +9,8 @@ on:
 jobs:
   build-macos:
     runs-on: macos-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -103,20 +105,22 @@ jobs:
     needs: [build-macos, build-windows, build-linux]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          merge-multiple: false
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            artifacts/Bitmerger-macos/Bitmerger-macos.zip
-            artifacts/Bitmerger-windows/Bitmerger-windows.zip
-            artifacts/Bitmerger-linux/Bitmerger-linux.tar.gz
-          draft: false
-          prerelease: false
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            artifacts/Bitmerger-macos/Bitmerger-macos.zip \
+            artifacts/Bitmerger-windows/Bitmerger-windows.zip \
+            artifacts/Bitmerger-linux/Bitmerger-linux.tar.gz \
+            --title "${{ github.ref_name }}" \
+            --generate-notes
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

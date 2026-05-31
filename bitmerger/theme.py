@@ -118,7 +118,7 @@ class ThemeManager(QObject):
                 "header": "#eaeef2",
             }
 
-    def _apply_stylesheet(self, widget=None) -> None:
+    def _apply_stylesheet(self, widget: Optional[Any] = None) -> None:
         target = widget or self._app
         if target:
             target.setStyleSheet(self.stylesheet())

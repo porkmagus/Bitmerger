@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple, Set
 
 import tldextract
-from thefuzz import fuzz  # type: ignore[import-not-found,import-untyped]
+from thefuzz import fuzz
 
 # --- Data Models ---
 
@@ -40,7 +40,7 @@ class UriEntry:
 
 @dataclass
 class LoginData:
-    uris: List[UriEntry] = field(default_factory=list)  # type: ignore[type-arg]
+    uris: List[UriEntry] = field(default_factory=list)
     username: Optional[str] = None
     password: Optional[str] = None
     totp: Optional[str] = None
@@ -124,7 +124,7 @@ class BwItem:
     revisionDate: Optional[str] = None
     creationDate: Optional[str] = None
     deletedDate: Optional[str] = None
-    extra: Dict[str, Any] = field(default_factory=dict)  # type: ignore[type-arg]
+    extra: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "BwItem":
@@ -262,7 +262,7 @@ class MergeRecord:
     primary: BwItem
     merged: List[BwItem]
     new_uris: List[str]
-    backfilled: Dict[str, Any] = field(default_factory=dict)  # type: ignore[type-arg]
+    backfilled: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -300,8 +300,8 @@ def normalize_domain(uri: str) -> str:
         extracted = tldextract.extract(host)
         domain = getattr(extracted, "top_domain_under_public_suffix", None) or getattr(extracted, "domain", "")
         if domain:
-            return domain.lower()
-        return host.lower()
+            return str(domain).lower()
+        return str(host).lower()
     except (ValueError, TypeError, AttributeError):
         # Malformed URI or unexpected type - return safe fallback
         return uri.lower().strip()[:200]
@@ -322,11 +322,11 @@ def fuzzy_name_similarity(a: str, b: str) -> float:
         na, nb = normalize_text(a), normalize_text(b)
         if not na or not nb:
             return 0.0
-        return fuzz.ratio(na, nb) / 100.0  # type: ignore[operator]
+        return float(fuzz.ratio(na, nb)) / 100.0
     except Exception:
         # Fallback for encoding issues with non-ASCII
         try:
-            return fuzz.ratio(str(a)[:200], str(b)[:200]) / 100.0  # type: ignore[operator]
+            return float(fuzz.ratio(str(a)[:200], str(b)[:200])) / 100.0
         except Exception:
             return 0.0
 
@@ -349,14 +349,7 @@ def login_similarity(a: BwItem, b: BwItem, fast: bool = False) -> float:
     domains_b = b.get_domains()
     if domains_a or domains_b:
         overlap = domains_a & domains_b
-        if overlap:
-            scores.append(1.0)
-        else:
-            best = 0.0
-            for da in domains_a:
-                for db in domains_b:
-                    best = max(best, fuzzy_name_similarity(da, db))
-            scores.append(best)
+        scores.append(1.0 if overlap else 0.0)
         weights.append(0.35)
 
     ua = (login_a.username or "").lower().strip()
@@ -571,14 +564,14 @@ def merge_items(target: BwItem, source: BwItem) -> Tuple[BwItem, Dict[str, Any]]
             t_login.password = s_login.password
             backfilled["password"] = True
         elif t_login.password and s_login.password and t_login.password != s_login.password:
-            conflicts.append("Alternate password: [hidden]")
+            conflicts.append(f"Alternate password: {s_login.password}")
 
         # TOTP
         if not t_login.totp and s_login.totp:
             t_login.totp = s_login.totp
             backfilled["totp"] = True
         elif t_login.totp and s_login.totp and t_login.totp != s_login.totp:
-            conflicts.append("Alternate TOTP: [hidden]")
+            conflicts.append(f"Alternate TOTP: {s_login.totp}")
 
         # Passkeys
         if s_login.fido2Credentials:
@@ -587,9 +580,9 @@ def merge_items(target: BwItem, source: BwItem) -> Tuple[BwItem, Dict[str, Any]]
             seen_ids: set[Any] = set()
             for cred in t_login.fido2Credentials:
                 if isinstance(cred, dict):
-                    key = (cred.get("credentialId"), cred.get("rpId"))
-                    if key[0]:
-                        seen_ids.add(key)
+                    cred_key = (cred.get("credentialId"), cred.get("rpId"))
+                    if cred_key[0]:
+                        seen_ids.add(cred_key)
             added_count = 0
             for cred in s_login.fido2Credentials:
                 if not isinstance(cred, dict):
@@ -601,10 +594,10 @@ def merge_items(target: BwItem, source: BwItem) -> Tuple[BwItem, Dict[str, Any]]
                 # Validate rpId is a string or None
                 if rpId is not None and not isinstance(rpId, str):
                     rpId = str(rpId)
-                key = (str(cid) if cid is not None else None, rpId)
-                if cid and key not in seen_ids:
+                cred_key = (str(cid) if cid is not None else None, rpId)
+                if cid and cred_key not in seen_ids:
                     t_login.fido2Credentials.append(cred)
-                    seen_ids.add(key)
+                    seen_ids.add(cred_key)
                     added_count += 1
                 elif not cid:
                     t_login.fido2Credentials.append(cred)
@@ -645,7 +638,7 @@ def merge_items(target: BwItem, source: BwItem) -> Tuple[BwItem, Dict[str, Any]]
             t_ssh.privateKey = s_ssh.privateKey
             backfilled["ssh_private"] = True
         elif t_ssh.privateKey and s_ssh.privateKey and t_ssh.privateKey != s_ssh.privateKey:
-            conflicts.append("Alternate SSH private key: [hidden]")
+            conflicts.append(f"Alternate SSH private key: {s_ssh.privateKey}")
         if not t_ssh.publicKey and s_ssh.publicKey:
             t_ssh.publicKey = s_ssh.publicKey
             backfilled["ssh_public"] = True

@@ -521,7 +521,7 @@ class ItemEditor(QScrollArea):
         btn = QPushButton("✕")
         btn.setFixedWidth(24)
         btn.setStyleSheet("border: none; color: #f85149;")
-        btn.clicked.connect(lambda: self._remove_uri_row(row))  # type: ignore[misc]
+        btn.clicked.connect(lambda: self._remove_uri_row(row))
         row.addWidget(btn)
         self._uri_list.addLayout(row)
 
@@ -554,7 +554,7 @@ class ItemEditor(QScrollArea):
         btn = QPushButton("✕")
         btn.setFixedWidth(24)
         btn.setStyleSheet("border: none; color: #f85149;")
-        btn.clicked.connect(lambda: self._remove_cf_row(row))  # type: ignore[misc]
+        btn.clicked.connect(lambda: self._remove_cf_row(row))
         row.addWidget(btn)
         self._cf_grid.addLayout(row, self._cf_row, 0)
         self._cf_row += 1

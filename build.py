@@ -15,7 +15,7 @@ from pathlib import Path
 
 
 def run(cmd: list[str]) -> None:
-    print(" →", " ".join(cmd))
+    print(" ->", " ".join(cmd))
     subprocess.run(cmd, check=True)
 
 
@@ -47,7 +47,7 @@ def main() -> None:
     ]
 
     run(cmd)
-    print("\n✅ Build complete. Output in dist/Bitmerger")
+    print("\n[OK] Build complete. Output in dist/Bitmerger")
 
 
 if __name__ == "__main__":

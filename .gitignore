@@ -49,3 +49,7 @@ Thumbs.db
 *.original.*.json
 *.report.html
 merge_log.json
+# PyInstaller build artifacts
+build/
+dist/
+*.spec

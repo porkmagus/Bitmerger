@@ -125,10 +125,14 @@ python3 bw_dedup.py
 - Per-field merge preview before executing
 - Execute merge with one click
 
-### Batch Rename
-- Search and standardize item names with mouse clicks
+### Batch Editor
+- Search across **all** Bitwarden fields with `field:value` syntax: `favorite:true`, `type:login`, `folder:Personal`, `username:alice`, `domain:github.com`, `notes:backup`, `id:abc`, `org:my-org`, `collection:shared`
+- Bulk edit fields: **Name**, **Username**, **Notes**, **Favorite**, **Reprompt**, **Folder**
+- Toggle booleans (Favorite, Reprompt) with a checkbox
+- Apply to selected rows or all visible matches
 - Preview matches before applying
 - Undo/redo supported
+- Exports `.edited.json` with a `.batch-edit-log.json` audit trail
 
 ### Health Audit
 - One-click scan for:
@@ -292,8 +296,8 @@ python3 -m unittest discover -s tests -p "test_*.py" -v
 - Round-trip serialization
 - Backup and merge log generation
 - HTML report generation
-- Batch rename query parsing and matching
-- Rename log generation
+- Batch editor query parsing and matching
+- Batch edit log generation
 - End-to-end integration tests
 
 All tests pass with **0 type checking errors**.
@@ -383,7 +387,7 @@ bitmerger/
 ├── test_large_vault.py      # Stress test suite
 └── tests/
     ├── test_engine.py       # 35 core engine tests
-    └── test_batch_rename.py # 20 batch-rename tests
+    └── test_batch_editor.py # 20 batch-editor tests
 ```
 
 ---

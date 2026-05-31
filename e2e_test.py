@@ -10,7 +10,7 @@ sys.path.insert(0, '/Users/sean/repos/bitmerger')
 os.environ['QT_QPA_PLATFORM'] = 'offscreen'
 
 from PySide6.QtWidgets import QApplication
-from bitmerger.gui import MainWindow, VaultTable, DedupWorker, RenameWorker
+from bitmerger.gui import MainWindow, VaultTable, DedupWorker, BatchSearchWorker
 from bitmerger.core import load_vault
 from bitmerger.theme import ThemeManager, Theme
 
@@ -29,7 +29,7 @@ def test_gui_import():
     assert MainWindow is not None
     assert VaultTable is not None
     assert DedupWorker is not None
-    assert RenameWorker is not None
+    assert BatchSearchWorker is not None
     print("    PASS")
 
 def test_window_creation():
@@ -47,7 +47,7 @@ def test_vault_table():
     """Test VaultTable with sample data."""
     print("[3] Vault Table...")
     table = VaultTable()
-    assert table.columnCount() == 6
+    assert table.columnCount() == 9
     assert table.selectionBehavior() == VaultTable.SelectionBehavior.SelectRows
     assert table.selectionMode() == VaultTable.SelectionMode.ExtendedSelection
     print("    PASS")
@@ -188,14 +188,14 @@ def test_dedup_worker():
     else:
         print("    SKIP (no large vault fixture)")
 
-def test_rename_worker():
-    """Test rename worker."""
-    print("[11] Rename Worker...")
+def test_batch_search_worker():
+    """Test batch search worker."""
+    print("[11] Batch Search Worker...")
     vault_path = "/Users/sean/repos/bitmerger/tests/fixtures/large_vault.json"
     if os.path.exists(vault_path):
         from pathlib import Path
         items, raw_data = load_vault(Path(vault_path))
-        worker = RenameWorker(items, ["google"], {1})
+        worker = BatchSearchWorker(items, ["google"], {1})
         assert worker is not None
         print(f"    PASS (created worker with {len(items)} items)")
     else:
@@ -300,7 +300,7 @@ def main():
         test_undo_redo,
         test_theme_toggle,
         test_dedup_worker,
-        test_rename_worker,
+        test_batch_search_worker,
         test_vault_table_population,
         test_vault_table_selection,
         test_item_editor,

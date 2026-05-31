@@ -983,7 +983,76 @@ def generate_html_report(
         f.write(html)
 
 
-# --- Batch Rename ---
+# --- Batch Search & Edit ---
+
+_TYPE_MAP: dict[str, int] = {"login": 1, "note": 2, "card": 3, "identity": 4, "ssh": 5, "ssh key": 5}
+
+def _parse_bool(value: str) -> Optional[bool]:
+    v = value.lower().strip()
+    if v in ("true", "1", "yes", "on"):
+        return True
+    if v in ("false", "0", "no", "off"):
+        return False
+    return None
+
+def _type_from_str(value: str) -> Optional[int]:
+    v = value.lower().strip()
+    if v in _TYPE_MAP:
+        return _TYPE_MAP[v]
+    try:
+        return int(v)
+    except ValueError:
+        return None
+
+def _field_matches(item: BwItem, key: str, value: str, folder_map: Optional[Dict[str, str]] = None) -> bool:
+    key = key.lower().strip()
+    value_lower = value.lower().strip()
+
+    if key == "name":
+        return value_lower in (item.name or "").lower()
+    if key == "username":
+        if not item.login:
+            return False
+        return value_lower in (item.login.username or "").lower()
+    if key == "domain":
+        if not item.login:
+            return False
+        domains = item.get_domains()
+        return any(value_lower in d.lower() for d in domains)
+    if key == "uri":
+        if not item.login:
+            return False
+        return any(value_lower in (u.uri or "").lower() for u in item.login.uris)
+    if key == "notes":
+        return value_lower in (item.notes or "").lower()
+    if key == "id":
+        return value_lower in item.id.lower()
+    if key == "folder":
+        folder_name = (folder_map or {}).get(item.folderId or "", "").lower()
+        return value_lower in folder_name or value_lower in (item.folderId or "").lower()
+    if key in ("org", "organization"):
+        return value_lower in (item.organizationId or "").lower()
+    if key == "collection":
+        if not item.collectionIds:
+            return False
+        return any(value_lower in c.lower() for c in item.collectionIds)
+    if key == "type":
+        t = _type_from_str(value)
+        if t is not None:
+            return item.type == t
+        return False
+    if key == "favorite":
+        b = _parse_bool(value)
+        if b is not None:
+            return item.favorite == b
+        return False
+    if key == "reprompt":
+        b = _parse_bool(value)
+        if b is not None:
+            return bool(item.reprompt) == b
+        return False
+    return False
+
 
 def parse_search_query(query: str) -> list[str]:
     """Split query by '+' for OR search. Each term is stripped and lowercased."""
@@ -993,22 +1062,32 @@ def parse_search_query(query: str) -> list[str]:
     return terms if terms else [query.lower().strip()]
 
 
-def item_matches_terms(item: BwItem, terms: list[str]) -> bool:
-    """Check if item name contains any of the search terms (case-insensitive)."""
-    name_lower = (item.name or "").lower()
+def item_matches_terms(item: BwItem, terms: list[str], folder_map: Optional[Dict[str, str]] = None) -> bool:
+    """Check if item matches any of the search terms (case-insensitive).
+    
+    Supports simple substring search on name, plus field:value syntax for:
+    name, username, domain, uri, notes, id, folder, org, collection,
+    type, favorite, reprompt.
+    """
+    if not terms:
+        return False
     for term in terms:
         if term.startswith("regex:"):
             try:
                 pattern = term[6:]
-                if re.search(pattern, name_lower):
+                if re.search(pattern, (item.name or "").lower()):
                     return True
             except re.error:
                 continue
         elif term.startswith("exact:"):
-            if term[6:] == name_lower:
+            if term[6:] == (item.name or "").lower():
+                return True
+        elif ":" in term:
+            key, value = term.split(":", 1)
+            if _field_matches(item, key, value, folder_map):
                 return True
         else:
-            if term in name_lower:
+            if term in (item.name or "").lower():
                 return True
     return False
 
@@ -1017,10 +1096,72 @@ def filter_items_by_name(
     items: list[BwItem],
     terms: list[str],
     target_types: set[int],
+    folder_map: Optional[Dict[str, str]] = None,
 ) -> list[BwItem]:
     if not target_types:
-        return [i for i in items if item_matches_terms(i, terms)]
-    return [i for i in items if i.type in target_types and item_matches_terms(i, terms)]
+        return [i for i in items if item_matches_terms(i, terms, folder_map)]
+    return [i for i in items if i.type in target_types and item_matches_terms(i, terms, folder_map)]
+
+
+@dataclass
+class BatchEditRecord:
+    item_id: str
+    field: str
+    old_value: Any
+    new_value: Any
+
+
+def _get_field_value(item: BwItem, field: str) -> Any:
+    field = field.lower().strip()
+    if field == "name":
+        return item.name
+    if field == "username":
+        return item.login.username if item.login else None
+    if field == "notes":
+        return item.notes
+    if field == "favorite":
+        return item.favorite
+    if field == "reprompt":
+        return bool(item.reprompt)
+    if field == "folder":
+        return item.folderId
+    return None
+
+
+def _set_field_value(item: BwItem, field: str, value: Any) -> None:
+    field = field.lower().strip()
+    if field == "name":
+        item.name = str(value)
+    elif field == "username":
+        if item.login is None:
+            item.login = LoginData()
+        item.login.username = str(value) if value else None
+    elif field == "notes":
+        item.notes = str(value) if value else None
+    elif field == "favorite":
+        item.favorite = bool(value)
+    elif field == "reprompt":
+        item.reprompt = 1 if value else 0
+    elif field == "folder":
+        item.folderId = str(value) if value else None
+
+
+def apply_batch_edit(
+    items: list[BwItem],
+    matches: list[BwItem],
+    field: str,
+    value: Any,
+) -> list[BatchEditRecord]:
+    """Apply a field edit to all matched items in-place. Returns edit records."""
+    records: list[BatchEditRecord] = []
+    match_ids = {id(m) for m in matches}
+    for item in items:
+        if id(item) not in match_ids:
+            continue
+        old = _get_field_value(item, field)
+        _set_field_value(item, field, value)
+        records.append(BatchEditRecord(item.id, field, old, value))
+    return records
 
 
 def create_rename_log(
@@ -1035,6 +1176,24 @@ def create_rename_log(
         seen_ids.add(rid)
         log_data.append({"id": rid, "old_name": old, "new_name": new})
     log_path = output_path.with_suffix(f"{output_path.suffix}.rename-log.json")
+    with open(log_path, "w", encoding="utf-8") as f:
+        json.dump(log_data, f, indent=2, ensure_ascii=False)
+    return log_path
+
+
+def create_batch_edit_log(
+    records: list[BatchEditRecord],
+    output_path: Path,
+) -> Path:
+    log_data: list[Dict[str, Any]] = []
+    for r in records:
+        log_data.append({
+            "id": r.item_id,
+            "field": r.field,
+            "old": r.old_value,
+            "new": r.new_value,
+        })
+    log_path = output_path.with_suffix(f"{output_path.suffix}.batch-edit-log.json")
     with open(log_path, "w", encoding="utf-8") as f:
         json.dump(log_data, f, indent=2, ensure_ascii=False)
     return log_path

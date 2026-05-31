@@ -8,13 +8,13 @@ Usage:
 
 import sys
 from pathlib import Path
-from typing import Any, Optional, List
+from typing import Optional, List, Dict, Any
 
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QLineEdit, QCheckBox, QDoubleSpinBox,
-    QFileDialog, QMessageBox, QProgressBar, QTabWidget,
+    QFileDialog, QMessageBox, QProgressBar, QTabWidget, QComboBox,
     QGroupBox, QTableWidget, QTableWidgetItem, QTextEdit,
     QHeaderView,
 )
@@ -28,6 +28,7 @@ from .core import (
     create_backup, create_merge_log, generate_html_report,
     parse_search_query, filter_items_by_name, create_rename_log,
     load_vault, save_vault,
+    apply_batch_edit, create_batch_edit_log, BatchEditRecord,
 )
 
 # ---------------------------------------------------------------------------
@@ -54,19 +55,20 @@ class DedupWorker(QThread):
             self.error.emit(str(e))
 
 
-class RenameWorker(QThread):
+class BatchSearchWorker(QThread):
     finished = Signal(list, list)  # matches, all_items
     error = Signal(str)
 
-    def __init__(self, items: list[BwItem], terms: list[str], target_types: set[int]) -> None:
+    def __init__(self, items: list[BwItem], terms: list[str], target_types: set[int], folder_map: Optional[Dict[str, str]] = None) -> None:
         super().__init__()
         self.items = items
         self.terms = terms
         self.target_types = target_types
+        self.folder_map = folder_map
 
     def run(self) -> None:
         try:
-            matches = filter_items_by_name(self.items, self.terms, self.target_types)
+            matches = filter_items_by_name(self.items, self.terms, self.target_types, self.folder_map)
             self.finished.emit(matches, self.items)
         except Exception as e:
             self.error.emit(str(e))
@@ -79,8 +81,9 @@ class RenameWorker(QThread):
 class VaultTable(QTableWidget):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self.setColumnCount(5)
-        self.setHorizontalHeaderLabels(["Type", "Name", "Username", "Domain", "ID"])
+        self._folder_map: Dict[str, str] = {}
+        self.setColumnCount(9)
+        self.setHorizontalHeaderLabels(["Type", "Name", "Username", "Domain", "Favorite", "Reprompt", "Folder", "Notes", "ID"])
         self.horizontalHeader().setStretchLastSection(True)
         self.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.horizontalHeader().setHighlightSections(False)
@@ -88,6 +91,9 @@ class VaultTable(QTableWidget):
         self.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self.setAlternatingRowColors(True)
         self.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+
+    def set_folder_map(self, folder_map: Dict[str, str]) -> None:
+        self._folder_map = folder_map
 
     def set_items(self, items: list[BwItem]) -> None:
         # Performance optimization for large vaults: disable updates,
@@ -111,11 +117,20 @@ class VaultTable(QTableWidget):
                 username = item.login.username or ""
                 if item.login.uris:
                     domain = normalize_domain(item.login.uris[0].uri) or ""
+            fav = "Yes" if item.favorite else ""
+            rep = "Yes" if item.reprompt else ""
+            folder = self._folder_map.get(item.folderId or "", "") or (item.folderId or "")
+            notes = (item.notes or "")[:40]
+
             self.setItem(row, 0, QTableWidgetItem(tname))
             self.setItem(row, 1, QTableWidgetItem(item.name))
             self.setItem(row, 2, QTableWidgetItem(username))
             self.setItem(row, 3, QTableWidgetItem(domain))
-            self.setItem(row, 4, QTableWidgetItem(item.id))
+            self.setItem(row, 4, QTableWidgetItem(fav))
+            self.setItem(row, 5, QTableWidgetItem(rep))
+            self.setItem(row, 6, QTableWidgetItem(folder))
+            self.setItem(row, 7, QTableWidgetItem(notes))
+            self.setItem(row, 8, QTableWidgetItem(item.id))
 
         header.setSectionResizeMode(old_resize_mode)
         self.setUpdatesEnabled(True)
@@ -128,7 +143,7 @@ class VaultTable(QTableWidget):
         selected = []
         for idx in self.selectionModel().selectedRows():
             row = idx.row()
-            item_widget = self.item(row, 4)
+            item_widget = self.item(row, 8)
             if item_widget is None:
                 continue
             item_id = item_widget.text()
@@ -153,10 +168,11 @@ class MainWindow(QMainWindow):
         self._vault_path: Optional[Path] = None
         self._items: list[BwItem] = []
         self._raw_data: dict[str, Any] = {}
+        self._folder_map: Dict[str, str] = {}
         self._clusters: list[list[BwItem]] = []
         self._cluster_infos: list[ClusterInfo] = []
         self._dedup_worker: Optional[DedupWorker] = None
-        self._rename_worker: Optional[RenameWorker] = None
+        self._batch_worker: Optional[BatchSearchWorker] = None
 
         self._build_ui()
         
@@ -208,7 +224,7 @@ class MainWindow(QMainWindow):
 
         self._tabs.addTab(self._build_overview_tab(), "Vault Overview")
         self._tabs.addTab(self._build_dedup_tab(), "Deduplicate")
-        self._tabs.addTab(self._build_rename_tab(), "Batch Rename")
+        self._tabs.addTab(self._build_batch_editor_tab(), "Batch Editor")
 
         # Status bar
         self._status = QLabel("Ready")
@@ -339,42 +355,36 @@ class MainWindow(QMainWindow):
         layout.addWidget(results, 1)
         return w
 
-    def _build_rename_tab(self) -> QWidget:
+    def _build_batch_editor_tab(self) -> QWidget:
         w = QWidget()
         layout = QVBoxLayout(w)
         layout.setSpacing(12)
 
         # Search group
-        search_group = QGroupBox("Search & Replace")
+        search_group = QGroupBox("Search & Filter")
         search_layout = QVBoxLayout(search_group)
 
         # Search query
         query_row = QHBoxLayout()
         query_row.addWidget(QLabel("Search Query:"))
-        self._rename_query = QLineEdit()
-        self._rename_query.setPlaceholderText("google+mail.google — '+' means OR")
-        self._rename_query.setToolTip("Enter search terms. Use + to OR multiple terms. Example: 'google+mail' matches items with 'google' OR 'mail'.")
-        query_row.addWidget(self._rename_query, 1)
+        self._batch_query = QLineEdit()
+        self._batch_query.setPlaceholderText("google+type:login+favorite:true — '+' means OR")
+        self._batch_query.setToolTip(
+            "Enter search terms. Use + to OR. Supports field:value syntax: "
+            "name, username, domain, uri, notes, folder, type, favorite, reprompt, id, org, collection."
+        )
+        query_row.addWidget(self._batch_query, 1)
         search_layout.addLayout(query_row)
-
-        # Replace name
-        replace_row = QHBoxLayout()
-        replace_row.addWidget(QLabel("New Name:"))
-        self._rename_replace = QLineEdit()
-        self._rename_replace.setPlaceholderText("e.g., Google")
-        self._rename_replace.setToolTip("New name for all matched items")
-        replace_row.addWidget(self._rename_replace, 1)
-        search_layout.addLayout(replace_row)
 
         # Types
         rtypes_row = QHBoxLayout()
         rtypes_row.addWidget(QLabel("Item Types:"))
-        self._rename_type_checks: dict[int, QCheckBox] = {}
+        self._batch_type_checks: dict[int, QCheckBox] = {}
         type_labels = {1: "Logins", 2: "Notes", 3: "Cards", 4: "Identities", 5: "SSH Keys"}
         for code, label in type_labels.items():
             cb = QCheckBox(label)
             cb.setChecked(True)
-            self._rename_type_checks[code] = cb
+            self._batch_type_checks[code] = cb
             rtypes_row.addWidget(cb)
         rtypes_row.addStretch()
         search_layout.addLayout(rtypes_row)
@@ -383,14 +393,12 @@ class MainWindow(QMainWindow):
         btn_row = QHBoxLayout()
         btn_search = QPushButton("Search")
         btn_search.setStyleSheet("font-weight: bold; padding: 6px 16px;")
-        btn_search.clicked.connect(self._on_rename_search)
+        btn_search.clicked.connect(self._on_batch_search)
         btn_row.addWidget(btn_search)
 
-        self._btn_rename_exec = QPushButton("Execute Rename")
-        self._btn_rename_exec.setStyleSheet("font-weight: bold; padding: 6px 16px;")
-        self._btn_rename_exec.setEnabled(False)
-        self._btn_rename_exec.clicked.connect(self._on_rename_execute)
-        btn_row.addWidget(self._btn_rename_exec)
+        btn_clear = QPushButton("Clear")
+        btn_clear.clicked.connect(self._on_batch_clear)
+        btn_row.addWidget(btn_clear)
 
         btn_row.addStretch()
         search_layout.addLayout(btn_row)
@@ -401,17 +409,162 @@ class MainWindow(QMainWindow):
         results = QGroupBox("Matched Items")
         results_layout = QVBoxLayout(results)
 
-        self._rename_table = VaultTable()
-        results_layout.addWidget(self._rename_table)
+        self._batch_table = VaultTable()
+        results_layout.addWidget(self._batch_table)
 
-        self._rename_status = QLabel("No search performed yet")
-        self._rename_status.setStyleSheet("")
-        results_layout.addWidget(self._rename_status)
+        self._batch_status = QLabel("No search performed yet")
+        results_layout.addWidget(self._batch_status)
 
         layout.addWidget(results, 1)
+
+        # Bulk Edit group
+        edit_group = QGroupBox("Bulk Edit")
+        edit_layout = QVBoxLayout(edit_group)
+
+        field_row = QHBoxLayout()
+        field_row.addWidget(QLabel("Field:"))
+        self._batch_field_combo = QComboBox()
+        self._batch_field_combo.addItems(["Name", "Username", "Notes", "Favorite", "Reprompt", "Folder"])
+        self._batch_field_combo.setToolTip("Select the field to edit for all selected (or all visible) items")
+        self._batch_field_combo.currentTextChanged.connect(self._on_batch_field_changed)
+        field_row.addWidget(self._batch_field_combo)
+
+        self._batch_value_label = QLabel("Value:")
+        field_row.addWidget(self._batch_value_label)
+        self._batch_value_edit = QLineEdit()
+        self._batch_value_edit.setToolTip("New value for the selected field")
+        field_row.addWidget(self._batch_value_edit, 1)
+
+        self._batch_bool_check = QCheckBox("Enable")
+        self._batch_bool_check.setVisible(False)
+        field_row.addWidget(self._batch_bool_check)
+
+        field_row.addStretch()
+        edit_layout.addLayout(field_row)
+
+        btn_apply = QPushButton("Apply to Selected")
+        btn_apply.setStyleSheet("font-weight: bold; padding: 6px 16px;")
+        btn_apply.setToolTip("Apply the value to selected rows. If no rows are selected, applies to all visible matches.")
+        btn_apply.clicked.connect(self._on_batch_apply)
+        edit_layout.addWidget(btn_apply)
+
+        layout.addWidget(edit_group)
         return w
 
+    def _on_batch_field_changed(self, text: str) -> None:
+        is_bool = text in ("Favorite", "Reprompt")
+        self._batch_value_edit.setVisible(not is_bool)
+        self._batch_value_label.setVisible(not is_bool)
+        self._batch_bool_check.setVisible(is_bool)
+        if is_bool:
+            self._batch_bool_check.setText(f"Set {text}")
+            self._batch_bool_check.setChecked(True)
 
+    def _on_batch_search(self) -> None:
+        if not self._items:
+            QMessageBox.warning(self, "Warning", "Load a vault first.")
+            return
+
+        query = self._batch_query.text().strip()
+        if not query:
+            QMessageBox.warning(self, "Warning", "Enter a search query.")
+            return
+
+        self._progress.setVisible(True)
+        self._status.setText("Searching…")
+        self._batch_table.setRowCount(0)
+        self._batch_status.setText("")
+
+        terms = parse_search_query(query)
+        target_types = {c for c, cb in self._batch_type_checks.items() if cb.isChecked()}
+
+        self._batch_worker = BatchSearchWorker(self._items, terms, target_types, self._folder_map)
+        self._batch_worker.finished.connect(self._on_batch_finished)
+        self._batch_worker.error.connect(self._on_batch_error)
+        self._batch_worker.start()
+
+    def _on_batch_finished(self, matches: list[BwItem], all_items: list[BwItem]) -> None:
+        self._progress.setVisible(False)
+        self._batch_table.set_items(matches)
+        self._batch_status.setText(f"Found {len(matches)} matching item(s)")
+        self._status.setText(f"Search complete: {len(matches)} matches")
+
+    def _on_batch_error(self, msg: str) -> None:
+        self._progress.setVisible(False)
+        QMessageBox.critical(self, "Error", f"Search failed:\n{msg}")
+
+    def _on_batch_clear(self) -> None:
+        self._batch_table.clearContents()
+        self._batch_table.setRowCount(0)
+        self._batch_status.setText("No search performed yet")
+        self._batch_query.clear()
+
+    def _on_batch_apply(self) -> None:
+        field = self._batch_field_combo.currentText().lower()
+        value: Any
+        if field in ("favorite", "reprompt"):
+            value = self._batch_bool_check.isChecked()
+        else:
+            value = self._batch_value_edit.text().strip()
+            if not value:
+                QMessageBox.warning(self, "Warning", "Enter a value to apply.")
+                return
+
+        matches = self._batch_table.get_selected_items(self._items)
+        if not matches:
+            # apply to all visible
+            matches = []
+            for i in range(self._batch_table.rowCount()):
+                cell = self._batch_table.item(i, 8)
+                if cell is None:
+                    continue
+                item_id = cell.text()
+                for item in self._items:
+                    if item.id == item_id:
+                        matches.append(item)
+                        break
+
+        if not matches:
+            QMessageBox.warning(self, "Warning", "No items to edit.")
+            return
+
+        reply = QMessageBox.question(
+            self, "Confirm Batch Edit",
+            f"Apply '{field}' = '{value}' to {len(matches)} item(s)?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            records = apply_batch_edit(self._items, matches, field, value)
+            self._batch_table.set_items(matches)
+            self._overview_table.set_items(self._items)
+            self._update_stats()
+            self._batch_status.setText(f"Edited {len(records)} item(s) — field: {field}")
+            self._status.setText(f"Batch edit complete: {len(records)} items")
+
+            if self._vault_path:
+                backup = create_backup(self._vault_path)
+                out_path = self._vault_path.with_suffix(".edited.json")
+                save_vault(out_path, self._items, self._raw_data)
+                if records:
+                    create_batch_edit_log(records, out_path)
+                QMessageBox.information(
+                    self, "Batch Edit Complete",
+                    f"Edited {len(records)} items.\n"
+                    f"Saved to: {out_path}\n"
+                    f"Backup: {backup}"
+                )
+            else:
+                QMessageBox.information(
+                    self, "Batch Edit Complete",
+                    f"Edited {len(records)} items.\n\n"
+                    f"Use 'Save Vault…' to write the export."
+                )
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Batch edit failed:\n{e}")
 
     # --- Event handlers ---
 
@@ -426,14 +579,24 @@ class MainWindow(QMainWindow):
             if self._dedup_worker and self._dedup_worker.isRunning():
                 self._dedup_worker.quit()
                 self._dedup_worker.wait(2000)
-            if self._rename_worker and self._rename_worker.isRunning():
-                self._rename_worker.quit()
-                self._rename_worker.wait(2000)
+            if self._batch_worker and self._batch_worker.isRunning():
+                self._batch_worker.quit()
+                self._batch_worker.wait(2000)
 
             self._vault_path = Path(path)
             self._items, self._raw_data = load_vault(self._vault_path)
             self._file_label.setText(str(self._vault_path))
             
+            # Build folder ID -> name map
+            folders = self._raw_data.get("folders", [])
+            self._folder_map = {
+                f["id"]: f.get("name", "")
+                for f in folders
+                if isinstance(f, dict) and "id" in f
+            }
+            self._overview_table.set_folder_map(self._folder_map)
+            self._batch_table.set_folder_map(self._folder_map)
+
             self._btn_save.setEnabled(True)
             self._update_stats()
             self._overview_table.set_items(self._items)
@@ -447,11 +610,10 @@ class MainWindow(QMainWindow):
             self._dedup_detail.clear()
             self._btn_dedup_merge.setEnabled(False)
 
-            # Clear all rename state from previous vault
-            self._rename_table.clearContents()
-            self._rename_table.setRowCount(0)
-            self._rename_status.setText("No search performed yet")
-            self._btn_rename_exec.setEnabled(False)
+            # Clear all batch editor state from previous vault
+            self._batch_table.clearContents()
+            self._batch_table.setRowCount(0)
+            self._batch_status.setText("No search performed yet")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load vault:\n{e}")
 
@@ -755,110 +917,9 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Dry run failed:\n{e}")
 
-    # --- Batch Rename ---
+    # --- Batch Editor ---
 
-    def _on_rename_search(self) -> None:
-        if not self._items:
-            QMessageBox.warning(self, "Warning", "Load a vault first.")
-            return
-
-        query = self._rename_query.text().strip()
-        if not query:
-            QMessageBox.warning(self, "Warning", "Enter a search query.")
-            return
-
-        self._progress.setVisible(True)
-        self._status.setText("Searching…")
-        self._rename_table.setRowCount(0)
-        self._btn_rename_exec.setEnabled(False)
-
-        terms = parse_search_query(query)
-        target_types = {c for c, cb in self._rename_type_checks.items() if cb.isChecked()}
-
-        self._rename_worker = RenameWorker(self._items, terms, target_types)
-        self._rename_worker.finished.connect(self._on_rename_finished)
-        self._rename_worker.error.connect(self._on_rename_error)
-        self._rename_worker.start()
-
-    def _on_rename_finished(self, matches: list[BwItem], all_items: list[BwItem]) -> None:
-        self._progress.setVisible(False)
-        self._rename_table.set_items(matches)
-        self._rename_status.setText(f"Found {len(matches)} matching item(s)")
-        self._btn_rename_exec.setEnabled(len(matches) > 0)
-        self._status.setText(f"Search complete: {len(matches)} matches")
-
-    def _on_rename_error(self, msg: str) -> None:
-        self._progress.setVisible(False)
-        QMessageBox.critical(self, "Error", f"Search failed:\n{msg}")
-
-    def _on_rename_execute(self) -> None:
-        replace = self._rename_replace.text().strip()
-        if not replace:
-            QMessageBox.warning(self, "Warning", "Enter a replacement name.")
-            return
-
-        matches = self._rename_table.get_selected_items(self._items)
-        if not matches:
-            # If nothing selected, rename all visible matches
-            matches = []
-            for i in range(self._rename_table.rowCount()):
-                cell = self._rename_table.item(i, 4)
-                if cell is None:
-                    continue
-                item_id = cell.text()
-                for item in self._items:
-                    if item.id == item_id:
-                        matches.append(item)
-                        break
-
-        if not matches:
-            QMessageBox.warning(self, "Warning", "No items to rename.")
-            return
-
-        reply = QMessageBox.question(
-            self, "Confirm Rename",
-            f"Rename {len(matches)} item(s) to \"{replace}\"?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-
-        try:
-            match_ids = {id(m) for m in matches}
-            renamed: list[tuple[str, str, str]] = []
-            for item in self._items:
-                if id(item) in match_ids:
-                    old_name = item.name
-                    item.name = replace
-                    renamed.append((item.id, old_name, replace))
-
-            self._rename_table.set_items([])
-            self._overview_table.set_items(self._items)
-            self._update_stats()
-            self._rename_status.setText(f"Renamed {len(renamed)} item(s) to {replace}")
-            self._status.setText(f"Renamed {len(renamed)} items")
-
-            if self._vault_path:
-                backup = create_backup(self._vault_path)
-                out_path = self._vault_path.with_suffix(".renamed.json")
-                save_vault(out_path, self._items, self._raw_data)
-                if renamed:
-                    create_rename_log(renamed, out_path)
-                QMessageBox.information(
-                    self, "Rename Complete",
-                    f"Renamed {len(renamed)} items.\n"
-                    f"Saved to: {out_path}\n"
-                    f"Backup: {backup}"
-                )
-            else:
-                QMessageBox.information(
-                    self, "Rename Complete",
-                    f"Renamed {len(renamed)} items.\n\n"
-                    f"Use 'Save Vault…' to write the export."
-                )
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Rename failed:\n{e}")
+    # (handlers moved above into the main event-handlers section)
 
 
 def run() -> None:

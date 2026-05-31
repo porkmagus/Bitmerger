@@ -25,6 +25,7 @@ from .core import (
     create_backup, create_merge_log, generate_html_report,
     parse_search_query, filter_items_by_name, create_rename_log,
     load_vault, save_vault,
+    apply_batch_edit, create_batch_edit_log,
 )
 
 console = Console()
@@ -316,28 +317,32 @@ def dedup(
     ))
 
 
-@cli.command(name="batch-rename")
+@cli.command(name="batch-edit")
 @click.argument("input_file", type=click.Path(exists=True, dir_okay=False))
 @click.option("-o", "--output", type=click.Path(), default=None, help="Output JSON path.")
-@click.option("--search", required=True, help="Search query. Use + for OR: google+mail.google")
-@click.option("--replace", required=True, help="New name for all matched items")
+@click.option("--search", required=True, help="Search query. Use + for OR. Supports field:value syntax.")
+@click.option("--field", default="name", help="Field to edit: name, username, notes, favorite, reprompt, folder")
+@click.option("--value", required=True, help="New value for the field (true/false for booleans)")
 @click.option("--yes", is_flag=True, help="Skip confirmation prompt")
-@click.option("--no-backup", is_flag=True, help="Skip creating a backup of the original file")
+@click.option("--no-backup", is_flag=True, help="Skip creating a backup")
 @click.option("--types", type=str, default="1,2,3,4,5", help="Comma-separated item types to search")
-@click.option("--dry-run", is_flag=True, help="Preview matches without writing output")
-def batch_rename(
+@click.option("--dry-run", is_flag=True, help="Preview matches without writing")
+@click.pass_context
+def batch_edit(
+    ctx: Any,
     input_file: str,
     output: Optional[str],
     search: str,
-    replace: str,
+    field: str,
+    value: str,
     yes: bool,
     no_backup: bool,
     types: str,
     dry_run: bool,
 ) -> None:
-    """Batch rename vault items by name search."""
+    """Batch edit vault items by search query."""
     input_path = Path(input_file)
-    output_path = Path(output) if output else input_path.with_suffix(".renamed.json")
+    output_path = Path(output) if output else input_path.with_suffix(".edited.json")
     target_types = set(int(t.strip()) for t in types.split(",") if t.strip().isdigit())
 
     t0 = time.time()
@@ -376,9 +381,14 @@ def batch_rename(
         table.add_row(item.id, tname, item.name, username, domain)
     console.print(table)
 
+    # Parse boolean value for favorite/reprompt
+    parsed_value: Any = value
+    if field.lower() in ("favorite", "reprompt"):
+        parsed_value = value.lower() in ("true", "1", "yes", "on")
+
     if not yes:
         choice = Prompt.ask(
-            f"Rename {len(matches)} item(s) to [bold]{replace}[/]?",
+            f"Set {field} = [bold]{parsed_value}[/] on {len(matches)} item(s)?",
             default="n",
             choices=["y", "n"],
             show_choices=True,
@@ -391,37 +401,68 @@ def batch_rename(
         console.print("[yellow]Dry run — no files written.")
         return
 
-    match_ids: set[int] = {id(m) for m in matches}
-    renamed: list[tuple[str, str, str]] = []
-    for item in all_items:
-        if id(item) in match_ids:
-            old_name = item.name
-            item.name = replace
-            renamed.append((item.id, old_name, replace))
-
+    records = apply_batch_edit(all_items, matches, field, parsed_value)
     save_vault(output_path, all_items, data)
 
     if not no_backup:
         backup = create_backup(input_path)
         console.print(f"[dim]Backup created: {backup}")
 
-    console.print(f"[bold green]Wrote renamed export to[/] {output_path}")
+    console.print(f"[bold green]Wrote edited export to[/] {output_path}")
 
-    if renamed:
-        log_path = create_rename_log(renamed, output_path)
-        console.print(f"[dim]Rename log: {log_path}")
+    if records:
+        log_path = create_batch_edit_log(records, output_path)
+        console.print(f"[dim]Edit log: {log_path}")
 
     console.print(Panel(
         Text.assemble(
-            ("Renamed ", "bold white"),
-            (f"{len(renamed)}", "bold green"),
-            (" items to ", "bold white"),
-            (f"{replace}", "bold blue"),
-            (".", "bold white"),
+            ("Edited ", "bold white"),
+            (f"{len(records)}", "bold green"),
+            (" items (", "bold white"),
+            (f"{field}", "bold blue"),
+            ("=", "bold white"),
+            (f"{parsed_value}", "bold blue"),
+            (").", "bold white"),
         ),
-        title="🔐 Bitmerger Batch Rename",
+        title="🔐 Bitmerger Batch Edit",
         border_style="green"
     ))
+
+
+@cli.command(name="batch-rename")
+@click.argument("input_file", type=click.Path(exists=True, dir_okay=False))
+@click.option("-o", "--output", type=click.Path(), default=None, help="Output JSON path.")
+@click.option("--search", required=True, help="Search query. Use + for OR: google+mail.google")
+@click.option("--replace", required=True, help="New name for all matched items")
+@click.option("--yes", is_flag=True, help="Skip confirmation prompt")
+@click.option("--no-backup", is_flag=True, help="Skip creating a backup of the original file")
+@click.option("--types", type=str, default="1,2,3,4,5", help="Comma-separated item types to search")
+@click.option("--dry-run", is_flag=True, help="Preview matches without writing output")
+@click.pass_context
+def batch_rename(
+    ctx: Any,
+    input_file: str,
+    output: Optional[str],
+    search: str,
+    replace: str,
+    yes: bool,
+    no_backup: bool,
+    types: str,
+    dry_run: bool,
+) -> None:
+    """Backward-compatible alias for batch-edit (field=name)."""
+    ctx.invoke(
+        batch_edit,
+        input_file=input_file,
+        output=output,
+        search=search,
+        field="name",
+        value=replace,
+        yes=yes,
+        no_backup=no_backup,
+        types=types,
+        dry_run=dry_run,
+    )
 
 
 def main() -> None:

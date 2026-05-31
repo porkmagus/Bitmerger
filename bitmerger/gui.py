@@ -422,6 +422,14 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
+            # Stop any running background workers before swapping data
+            if self._dedup_worker and self._dedup_worker.isRunning():
+                self._dedup_worker.quit()
+                self._dedup_worker.wait(2000)
+            if self._rename_worker and self._rename_worker.isRunning():
+                self._rename_worker.quit()
+                self._rename_worker.wait(2000)
+
             self._vault_path = Path(path)
             self._items, self._raw_data = load_vault(self._vault_path)
             self._file_label.setText(str(self._vault_path))
@@ -430,9 +438,17 @@ class MainWindow(QMainWindow):
             self._update_stats()
             self._overview_table.set_items(self._items)
             self._status.setText(f"Loaded {len(self._items)} items from {self._vault_path.name}")
+
+            # Clear all dedup state from previous vault
+            self._clusters = []
+            self._cluster_infos = []
+            self._dedup_table.clearContents()
             self._dedup_table.setRowCount(0)
             self._dedup_detail.clear()
             self._btn_dedup_merge.setEnabled(False)
+
+            # Clear all rename state from previous vault
+            self._rename_table.clearContents()
             self._rename_table.setRowCount(0)
             self._rename_status.setText("No search performed yet")
             self._btn_rename_exec.setEnabled(False)
@@ -472,6 +488,9 @@ class MainWindow(QMainWindow):
 
         self._progress.setVisible(True)
         self._status.setText("Analyzing duplicates…")
+        self._clusters = []
+        self._cluster_infos = []
+        self._dedup_table.clearContents()
         self._dedup_table.setRowCount(0)
         self._dedup_detail.clear()
         self._btn_dedup_merge.setEnabled(False)

@@ -90,6 +90,17 @@ class VaultTable(QTableWidget):
         self.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
 
     def set_items(self, items: list[BwItem]) -> None:
+        # Performance optimization for large vaults: disable updates,
+        # block signals, and temporarily switch header to Interactive mode
+        # (ResizeToContents is O(n²) for thousands of rows).
+        self.blockSignals(True)
+        self.setUpdatesEnabled(False)
+        header = self.horizontalHeader()
+        old_resize_mode = header.sectionResizeMode(0)
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+
+        self.clearContents()
+        self.setRowCount(0)
         self.setRowCount(len(items))
         type_names = {1: "Login", 2: "Note", 3: "Card", 4: "Identity", 5: "SSH"}
         for row, item in enumerate(items):
@@ -105,6 +116,13 @@ class VaultTable(QTableWidget):
             self.setItem(row, 2, QTableWidgetItem(username))
             self.setItem(row, 3, QTableWidgetItem(domain))
             self.setItem(row, 4, QTableWidgetItem(item.id))
+
+        header.setSectionResizeMode(old_resize_mode)
+        self.setUpdatesEnabled(True)
+        self.blockSignals(False)
+        # Force one resize pass now that all data is in
+        header.resizeSections(QHeaderView.ResizeMode.ResizeToContents)
+        self.viewport().update()
 
     def get_selected_items(self, all_items: list[BwItem]) -> list[BwItem]:
         selected = []
@@ -484,6 +502,14 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, "Error", f"Analysis failed:\n{msg}")
 
     def _populate_dedup_table(self, clusters: list[list[BwItem]]) -> None:
+        self._dedup_table.blockSignals(True)
+        self._dedup_table.setUpdatesEnabled(False)
+        header = self._dedup_table.horizontalHeader()
+        old_resize = header.sectionResizeMode(0)
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+
+        self._dedup_table.clearContents()
+        self._dedup_table.setRowCount(0)
         self._dedup_table.setRowCount(len(clusters))
         type_names = {1: "Login", 2: "Note", 3: "Card", 4: "Identity", 5: "SSH"}
         for idx, cluster in enumerate(clusters):
@@ -509,6 +535,12 @@ class MainWindow(QMainWindow):
             self._dedup_table.setItem(idx, 3, QTableWidgetItem(names))
             self._dedup_table.setItem(idx, 4, QTableWidgetItem(conf_str))
             self._dedup_table.setItem(idx, 5, QTableWidgetItem(key))
+
+        header.setSectionResizeMode(old_resize)
+        self._dedup_table.setUpdatesEnabled(True)
+        self._dedup_table.blockSignals(False)
+        header.resizeSections(QHeaderView.ResizeMode.ResizeToContents)
+        self._dedup_table.viewport().update()
 
     def _on_dedup_selection_changed(self) -> None:
         selected = self._dedup_table.selectedItems()

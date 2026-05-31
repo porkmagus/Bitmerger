@@ -19,7 +19,6 @@ from PySide6.QtGui import QAction, QKeySequence
 from .core import BwItem, UriEntry, LoginData, SshKeyData, load_vault, save_vault
 from .theme import get_theme_manager
 from .icons import type_badge_text, type_color, type_color_q
-from .premium import add_soft_shadow, enable_smooth_scroll
 
 
 class SecureLineEdit(QLineEdit):
@@ -29,7 +28,7 @@ class SecureLineEdit(QLineEdit):
         super().__init__(parent)
         self._masked = masked
         self.setEchoMode(QLineEdit.EchoMode.Password if masked else QLineEdit.EchoMode.Normal)
-        self._btn = QPushButton("\U0001f441" if masked else "\U0001f441\u200d\u20e8")
+        self._btn = QPushButton("👁" if masked else "🙈")
         self._btn.setFlat(True)
         self._btn.setFixedWidth(32)
         self._btn.setStyleSheet("border: none; background: transparent; padding: 2px; font-size: 14px;")
@@ -40,7 +39,7 @@ class SecureLineEdit(QLineEdit):
     def _toggle(self) -> None:
         self._masked = not self._masked
         self.setEchoMode(QLineEdit.EchoMode.Password if self._masked else QLineEdit.EchoMode.Normal)
-        self._btn.setText("\U0001f441" if self._masked else "\U0001f441\u200d\u20e8")
+        self._btn.setText("👁" if self._masked else "🙈")
 
     def toggle_button(self) -> QPushButton:
         return self._btn
@@ -48,7 +47,7 @@ class SecureLineEdit(QLineEdit):
     def set_masked(self, masked: bool) -> None:
         self._masked = masked
         self.setEchoMode(QLineEdit.EchoMode.Password if masked else QLineEdit.EchoMode.Normal)
-        self._btn.setText("\U0001f441" if masked else "\U0001f441\u200d\u20e8")
+        self._btn.setText("👁" if masked else "🙈")
 
 
 class ItemEditor(QScrollArea):
@@ -62,7 +61,6 @@ class ItemEditor(QScrollArea):
         self._dirty = False
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
-        enable_smooth_scroll(self)
         self._build_ui()
         self._clear_ui()
 
@@ -92,11 +90,11 @@ class ItemEditor(QScrollArea):
         # Favorite + Reprompt row
         flags_row = QHBoxLayout()
         flags_row.setSpacing(16)
-        self._fav_check = QCheckBox("\u2b50 Favorite")
+        self._fav_check = QCheckBox("⭐ Favorite")
         self._fav_check.setStyleSheet("font-size: 13px;")
         self._fav_check.toggled.connect(self._mark_dirty)
         flags_row.addWidget(self._fav_check)
-        self._reprompt_check = QCheckBox("\U0001f512 Master password re-prompt")
+        self._reprompt_check = QCheckBox("🔒 Master password re-prompt")
         self._reprompt_check.setStyleSheet("font-size: 13px;")
         self._reprompt_check.toggled.connect(self._mark_dirty)
         flags_row.addWidget(self._reprompt_check)
@@ -109,7 +107,6 @@ class ItemEditor(QScrollArea):
         self._tabs.setStyleSheet("QTabWidget::pane { border-radius: 8px; }")
         self._tabs.setTabPosition(QTabWidget.TabPosition.North)
         self._tabs.setStyleSheet("QTabWidget::pane { border-radius: 8px; }")
-        add_soft_shadow(self._tabs)
         layout.addWidget(self._tabs, 1)
 
         # --- Login Tab ---
@@ -129,7 +126,7 @@ class ItemEditor(QScrollArea):
         self._pw_edit.textChanged.connect(self._update_pw_strength)
         pw_row.addWidget(self._pw_edit, 1)
         pw_row.addWidget(self._pw_edit.toggle_button())
-        self._pw_gen_btn = QPushButton("\U0001f527 Generate")
+        self._pw_gen_btn = QPushButton("🔧 Generate")
         self._pw_gen_btn.setToolTip("Generate a strong password")
         self._pw_gen_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._pw_gen_btn.clicked.connect(self._generate_password)
@@ -160,7 +157,6 @@ class ItemEditor(QScrollArea):
 
         # URI list
         uri_group = QGroupBox("URIs")
-        add_soft_shadow(uri_group)
         uri_layout = QVBoxLayout(uri_group)
         uri_layout.setSpacing(6)
         self._uri_list = QVBoxLayout()
@@ -302,7 +298,6 @@ class ItemEditor(QScrollArea):
 
         # Metadata (folder, collections)
         meta = QGroupBox("Metadata")
-        add_soft_shadow(meta)
         meta_layout = QVBoxLayout(meta)
         self._folder_combo = QComboBox()
         self._folder_combo.setEditable(True)
@@ -322,15 +317,16 @@ class ItemEditor(QScrollArea):
 
         # Bottom actions
         actions = QHBoxLayout()
-        self._save_btn = QPushButton("\U0001f4be Save Changes")
-        self._save_btn.setProperty("primary", "true")
+        self._save_btn = QPushButton("💾 Save Changes")
+        self._save_btn.setStyleSheet("font-weight: 600; padding: 8px 16px;")
         self._save_btn.clicked.connect(self._save_changes)
         self._save_btn.setEnabled(False)
         actions.addWidget(self._save_btn)
         from PySide6.QtGui import QShortcut, QKeySequence
         self._save_shortcut = QShortcut(QKeySequence("Ctrl+Return"), self)
         self._save_shortcut.activated.connect(self._save_changes)
-        self._discard_btn = QPushButton("\u274c Discard")
+        self._discard_btn = QPushButton("❌ Discard")
+        self._discard_btn.setStyleSheet("padding: 8px 16px;")
         self._discard_btn.clicked.connect(self._on_discard)
         self._discard_btn.setEnabled(False)
         actions.addWidget(self._discard_btn)

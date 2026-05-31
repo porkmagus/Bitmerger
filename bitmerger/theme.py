@@ -28,11 +28,7 @@ class ThemeManager(QObject):
         return cls._instance
 
     def __init__(self, app: Optional[QApplication] = None) -> None:
-        # Singleton guard: Qt does not allow re-initialising a QObject
-        if hasattr(self, "_initialized"):
-            return
         super().__init__(None)
-        self._initialized = True
         self._app = app
         self._theme = Theme.AUTO
         self._load_theme()
@@ -138,39 +134,39 @@ class ThemeManager(QObject):
             background: {p["bg"]};
             border: none;
         }}
+        /* Round 1: Global smooth transitions */
+        QPushButton, QLineEdit, QTextEdit, QComboBox, QSpinBox, QDoubleSpinBox, QCheckBox::indicator {{
+            transition: all 150ms ease;
+        }}
         QGroupBox {{
             font-weight: bold;
             border: 1px solid {p["border"]};
-            border-radius: 12px;
-            margin-top: 14px;
-            padding-top: 14px;
-            padding-bottom: 14px;
-            padding-left: 16px;
-            padding-right: 16px;
+            border-radius: 10px;
+            margin-top: 12px;
+            padding-top: 12px;
+            padding-bottom: 12px;
+            padding-left: 14px;
+            padding-right: 14px;
             background: {p["surface"]};
             font-size: 13px;
         }}
         QGroupBox::title {{
             subcontrol-origin: margin;
-            left: 14px;
-            padding: 0 10px;
+            left: 12px;
+            padding: 0 8px;
             color: {p["accent"]};
             font-weight: 600;
-            font-size: 13px;
         }}
         QPushButton {{
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 {p["input_bg"]}, stop:1 {p["surface"]});
+            background: {p["input_bg"]};
             border: 1px solid {p["border"]};
-            border-radius: 8px;
-            padding: 7px 18px;
+            border-radius: 6px;
+            padding: 6px 16px;
             color: {p["fg"]};
             font-weight: 500;
-            font-size: 13px;
         }}
         QPushButton:hover {{
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 {p["border"]}, stop:1 {p["surface"]});
+            background: {p["border"]};
             border-color: {p["accent"]};
             color: {p["accent"]};
         }}
@@ -188,29 +184,13 @@ class ThemeManager(QObject):
             color: {p["muted"]};
             border-color: {p["border"]};
         }}
-        QPushButton[primary="true"] {{
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 {p["accent"]}, stop:1 {p["accent_hover"]});
-            border-color: {p["accent"]};
-            color: {p["bg"]};
-            font-weight: 600;
-        }}
-        QPushButton[primary="true"]:hover {{
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 {p["accent_hover"]}, stop:1 {p["accent"]});
-            border-color: {p["accent_hover"]};
-        }}
-        QPushButton[primary="true"]:pressed {{
-            background: {p["selection"]};
-        }}
         QLineEdit, QTextEdit {{
             background: {p["input_bg"]};
             border: 1px solid {p["border"]};
-            border-radius: 8px;
-            padding: 7px 10px;
+            border-radius: 6px;
+            padding: 6px;
             color: {p["fg"]};
             selection-background-color: {p["accent"]};
-            font-size: 13px;
         }}
         QLineEdit:focus, QTextEdit:focus {{
             border-color: {p["accent"]};
@@ -223,8 +203,8 @@ class ThemeManager(QObject):
         QComboBox {{
             background: {p["input_bg"]};
             border: 1px solid {p["border"]};
-            border-radius: 8px;
-            padding: 7px 12px;
+            border-radius: 6px;
+            padding: 6px 10px;
             color: {p["fg"]};
             font-size: 13px;
         }}
@@ -243,22 +223,19 @@ class ThemeManager(QObject):
             color: {p["fg"]};
             border: 1px solid {p["border"]};
             selection-background-color: {p["accent"]};
-            border-radius: 8px;
-            padding: 4px;
         }}
         QTableWidget {{
             background: {p["bg"]};
             alternate-background-color: {p["row_alt"]};
             gridline-color: {p["border"]};
             border: 1px solid {p["border"]};
-            border-radius: 10px;
+            border-radius: 8px;
             selection-background-color: {p["selection"]};
             color: {p["fg"]};
             outline: none;
         }}
         QTableWidget::item:hover {{
             background: {p["border"]};
-            border-radius: 4px;
         }}
         QTableWidget::item:selected {{
             background: {p["selection"]};
@@ -266,7 +243,7 @@ class ThemeManager(QObject):
             border-radius: 4px;
         }}
         QTableWidget::item {{
-            padding: 7px 10px;
+            padding: 6px 8px;
             border: none;
         }}
         QHeaderView::section {{
@@ -280,15 +257,9 @@ class ThemeManager(QObject):
         QHeaderView::section:hover {{
             background: {p["border"]};
         }}
-        QHeaderView::section:first {{
-            border-top-left-radius: 10px;
-        }}
-        QHeaderView::section:last {{
-            border-top-right-radius: 10px;
-        }}
         QTabWidget::pane {{
             border: 1px solid {p["border"]};
-            border-radius: 10px;
+            border-radius: 8px;
             background: {p["surface"]};
             top: -1px;
         }}
@@ -296,10 +267,10 @@ class ThemeManager(QObject):
             background: {p["surface"]};
             border: 1px solid {p["border"]};
             border-bottom: none;
-            border-top-left-radius: 10px;
-            border-top-right-radius: 10px;
-            padding: 10px 22px;
-            margin-right: 4px;
+            border-top-left-radius: 8px;
+            border-top-right-radius: 8px;
+            padding: 10px 20px;
+            margin-right: 3px;
             color: {p["muted"]};
             font-weight: 500;
             font-size: 13px;
@@ -316,30 +287,29 @@ class ThemeManager(QObject):
         }}
         QProgressBar {{
             border: 1px solid {p["border"]};
-            border-radius: 8px;
+            border-radius: 6px;
             text-align: center;
             background: {p["surface"]};
             font-size: 12px;
             font-weight: 500;
             color: {p["fg"]};
-            min-height: 22px;
-            max-height: 22px;
+            min-height: 20px;
+            max-height: 20px;
         }}
         QProgressBar::chunk {{
             background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
                 stop:0 {p["accent"]}, stop:1 {p["accent_hover"]});
-            border-radius: 7px;
-            margin: 2px;
+            border-radius: 5px;
+            margin: 1px;
         }}
         QCheckBox {{
-            spacing: 8px;
+            spacing: 6px;
             color: {p["fg"]};
-            font-size: 13px;
         }}
         QCheckBox::indicator {{
-            width: 20px;
-            height: 20px;
-            border-radius: 5px;
+            width: 18px;
+            height: 18px;
+            border-radius: 4px;
             border: 2px solid {p["border"]};
             background: {p["input_bg"]};
         }}
@@ -349,13 +319,18 @@ class ThemeManager(QObject):
         QCheckBox::indicator:checked {{
             background: {p["accent"]};
             border-color: {p["accent"]};
-            image: url(none);
+            image: none;
+        }}
+        QCheckBox::indicator:checked::after {{
+            content: "✓";
+            color: {p["bg"]};
+            font-weight: bold;
         }}
         QSpinBox, QDoubleSpinBox {{
             background: {p["input_bg"]};
             border: 1px solid {p["border"]};
-            border-radius: 8px;
-            padding: 5px 10px;
+            border-radius: 6px;
+            padding: 4px 8px;
             color: {p["fg"]};
             font-size: 13px;
         }}
@@ -367,13 +342,13 @@ class ThemeManager(QObject):
         }}
         QScrollBar:vertical {{
             background: {p["surface"]};
-            width: 10px;
-            border-radius: 5px;
+            width: 12px;
+            border-radius: 6px;
             margin: 2px;
         }}
         QScrollBar::handle:vertical {{
             background: {p["border"]};
-            border-radius: 5px;
+            border-radius: 6px;
             min-height: 30px;
             margin: 2px;
         }}
@@ -388,13 +363,13 @@ class ThemeManager(QObject):
         }}
         QScrollBar:horizontal {{
             background: {p["surface"]};
-            height: 10px;
-            border-radius: 5px;
+            height: 12px;
+            border-radius: 6px;
             margin: 2px;
         }}
         QScrollBar::handle:horizontal {{
             background: {p["border"]};
-            border-radius: 5px;
+            border-radius: 6px;
             min-width: 30px;
             margin: 2px;
         }}
@@ -409,7 +384,6 @@ class ThemeManager(QObject):
         }}
         QLabel {{
             color: {p["fg"]};
-            font-size: 13px;
         }}
         QLabel[muted="true"] {{
             color: {p["muted"]};
@@ -433,13 +407,12 @@ class ThemeManager(QObject):
             background: {p["surface"]};
             border: 1px solid {p["border"]};
             color: {p["fg"]};
-            border-radius: 10px;
-            padding: 8px;
+            border-radius: 8px;
+            padding: 6px;
         }}
         QMenu::item {{
             padding: 8px 16px;
-            border-radius: 6px;
-            font-size: 13px;
+            border-radius: 4px;
         }}
         QMenu::item:selected {{
             background: {p["accent"]};
@@ -462,19 +435,18 @@ class ThemeManager(QObject):
             background: {p["surface"]};
             color: {p["fg"]};
             border: 1px solid {p["border"]};
-            border-radius: 8px;
-            padding: 7px 12px;
+            border-radius: 6px;
+            padding: 6px 10px;
             font-size: 12px;
             font-weight: 500;
         }}
         QDialogButtonBox QPushButton {{
             background: {p["input_bg"]};
             border: 1px solid {p["border"]};
-            border-radius: 8px;
-            padding: 5px 14px;
+            border-radius: 6px;
+            padding: 4px 12px;
             color: {p["fg"]};
             font-weight: 500;
-            font-size: 13px;
         }}
         QDialogButtonBox QPushButton:hover {{
             background: {p["border"]};

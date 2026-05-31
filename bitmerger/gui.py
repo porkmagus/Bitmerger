@@ -30,11 +30,6 @@ from .core import (
     load_vault, save_vault,
     apply_batch_edit, create_batch_edit_log, BatchEditRecord,
 )
-from .theme import get_theme_manager
-from .premium import (
-    add_soft_shadow, fade_in, Toast, EmptyState,
-    HeaderCard, enable_smooth_scroll,
-)
 
 # ---------------------------------------------------------------------------
 # Worker threads (non-blocking)
@@ -180,9 +175,6 @@ class MainWindow(QMainWindow):
         self._batch_worker: Optional[BatchSearchWorker] = None
 
         self._build_ui()
-        # Force initial geometry on empty-state overlays
-        from PySide6.QtCore import QTimer
-        QTimer.singleShot(0, self._update_empty_states)
         
 
     # --- UI construction ---
@@ -191,22 +183,24 @@ class MainWindow(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(12)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
 
         # Header
-        header = HeaderCard("Bitmerger", "Bitwarden Vault Utility")
+        header = QLabel("Bitmerger — Bitwarden Vault Utility")
+        header_font = QFont()
+        header_font.setPointSize(18)
+        header_font.setBold(True)
+        header.setFont(header_font)
         layout.addWidget(header)
 
         # Vault file row
         file_row = QHBoxLayout()
         self._file_label = QLabel("No vault loaded")
-        self._file_label.setStyleSheet("font-size: 13px;")
         file_row.addWidget(self._file_label, 1)
 
         btn_load = QPushButton("Load Vault…")
         btn_load.setToolTip("Open a Bitwarden JSON export")
-        btn_load.setProperty("primary", "true")
         btn_load.clicked.connect(self._on_load_vault)
         file_row.addWidget(btn_load)
 
@@ -221,12 +215,11 @@ class MainWindow(QMainWindow):
 
         # Stats bar
         self._stats_label = QLabel("Items: 0 | Logins: 0 | Notes: 0 | Cards: 0 | Identities: 0 | SSH: 0")
-        self._stats_label.setStyleSheet("font-size: 12px; color: #8b949e;")
+        self._stats_label.setStyleSheet("font-size: 12px;")
         layout.addWidget(self._stats_label)
 
         # Tabs
         self._tabs = QTabWidget()
-        add_soft_shadow(self._tabs)
         layout.addWidget(self._tabs, 1)
 
         self._tabs.addTab(self._build_overview_tab(), "Vault Overview")
@@ -235,7 +228,7 @@ class MainWindow(QMainWindow):
 
         # Status bar
         self._status = QLabel("Ready")
-        self._status.setStyleSheet("padding: 4px; font-size: 12px;")
+        self._status.setStyleSheet("padding: 4px;")
         layout.addWidget(self._status)
 
         self._progress = QProgressBar()
@@ -243,44 +236,12 @@ class MainWindow(QMainWindow):
         self._progress.setVisible(False)
         layout.addWidget(self._progress)
 
-        # Apply theme stylesheet
-        get_theme_manager(QApplication.instance())._apply_stylesheet(self)  # type: ignore[arg-type]
-
-    def _toast(self, message: str, kind: str = "info") -> None:
-        """Show a non-blocking toast notification."""
-        toast = Toast(self, message, kind=kind)
-        toast.show_at_bottom_right()
-
-    def _update_empty_states(self) -> None:
-        """Keep empty-state overlays sized to their parent tables."""
-        for table, empty in [
-            (self._overview_table, getattr(self, "_overview_empty", None)),
-            (self._dedup_table, getattr(self, "_dedup_empty", None)),
-            (self._batch_table, getattr(self, "_batch_empty", None)),
-        ]:
-            if empty:
-                empty.setGeometry(table.rect())
-
-    def resizeEvent(self, event: Any) -> None:
-        super().resizeEvent(event)
-        self._update_empty_states()
-
     def _build_overview_tab(self) -> QWidget:
         w = QWidget()
         layout = QVBoxLayout(w)
-        layout.setSpacing(10)
 
         self._overview_table = VaultTable()
-        add_soft_shadow(self._overview_table)
-        enable_smooth_scroll(self._overview_table)
         layout.addWidget(self._overview_table)
-
-        self._overview_empty = EmptyState(
-            self._overview_table, icon="🗃", title="No vault loaded",
-            subtitle="Open a Bitwarden JSON export to view your vault items."
-        )
-        self._overview_empty.setGeometry(self._overview_table.rect())
-        self._overview_empty.show()
 
         btn_refresh = QPushButton("Refresh")
         btn_refresh.clicked.connect(lambda: self._overview_table.set_items(self._items))
@@ -295,7 +256,6 @@ class MainWindow(QMainWindow):
 
         # Settings group
         settings = QGroupBox("Deduplication Settings")
-        add_soft_shadow(settings)
         settings_layout = QVBoxLayout(settings)
         settings_layout.setSpacing(10)
 
@@ -350,11 +310,12 @@ class MainWindow(QMainWindow):
         # Buttons
         btn_row = QHBoxLayout()
         btn_analyze = QPushButton("Analyze Duplicates")
-        btn_analyze.setProperty("primary", "true")
+        btn_analyze.setStyleSheet("font-weight: bold; padding: 6px 16px;")
         btn_analyze.clicked.connect(self._on_dedup_analyze)
         btn_row.addWidget(btn_analyze)
 
         self._btn_dedup_merge = QPushButton("Execute Merge")
+        self._btn_dedup_merge.setStyleSheet("font-weight: bold; padding: 6px 16px;")
         self._btn_dedup_merge.setEnabled(False)
         self._btn_dedup_merge.clicked.connect(self._on_dedup_merge)
         btn_row.addWidget(self._btn_dedup_merge)
@@ -370,7 +331,6 @@ class MainWindow(QMainWindow):
 
         # Results
         results = QGroupBox("Duplicate Clusters")
-        add_soft_shadow(results)
         results_layout = QVBoxLayout(results)
 
         self._dedup_table = QTableWidget()
@@ -382,16 +342,7 @@ class MainWindow(QMainWindow):
         self._dedup_table.setAlternatingRowColors(True)
         self._dedup_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._dedup_table.setSortingEnabled(True)
-        add_soft_shadow(self._dedup_table)
-        enable_smooth_scroll(self._dedup_table)
         results_layout.addWidget(self._dedup_table)
-
-        self._dedup_empty = EmptyState(
-            self._dedup_table, icon="🔍", title="No duplicates found",
-            subtitle="Run 'Analyze Duplicates' to scan for duplicate items."
-        )
-        self._dedup_empty.setGeometry(self._dedup_table.rect())
-        self._dedup_empty.show()
 
         self._dedup_detail = QTextEdit()
         self._dedup_detail.setReadOnly(True)
@@ -412,7 +363,6 @@ class MainWindow(QMainWindow):
 
         # Search group
         search_group = QGroupBox("Search & Filter")
-        add_soft_shadow(search_group)
         search_layout = QVBoxLayout(search_group)
 
         # Search query
@@ -443,7 +393,7 @@ class MainWindow(QMainWindow):
         # Buttons
         btn_row = QHBoxLayout()
         btn_search = QPushButton("Search")
-        btn_search.setProperty("primary", "true")
+        btn_search.setStyleSheet("font-weight: bold; padding: 6px 16px;")
         btn_search.clicked.connect(self._on_batch_search)
         btn_row.addWidget(btn_search)
 
@@ -458,31 +408,19 @@ class MainWindow(QMainWindow):
 
         # Results table
         results = QGroupBox("Matched Items")
-        add_soft_shadow(results)
         results_layout = QVBoxLayout(results)
 
         self._batch_table = VaultTable()
         self._batch_table.itemSelectionChanged.connect(self._on_batch_selection_changed)
-        add_soft_shadow(self._batch_table)
-        enable_smooth_scroll(self._batch_table)
         results_layout.addWidget(self._batch_table)
 
-        self._batch_empty = EmptyState(
-            self._batch_table, icon="🔍", title="No search results",
-            subtitle="Enter a query and click Search to find items."
-        )
-        self._batch_empty.setGeometry(self._batch_table.rect())
-        self._batch_empty.show()
-
         self._batch_status = QLabel("No search performed yet")
-        self._batch_status.setStyleSheet("font-size: 12px; color: #8b949e;")
         results_layout.addWidget(self._batch_status)
 
         layout.addWidget(results, 1)
 
         # Bulk Edit group
         edit_group = QGroupBox("Bulk Edit")
-        add_soft_shadow(edit_group)
         edit_layout = QVBoxLayout(edit_group)
 
         field_row = QHBoxLayout()
@@ -506,7 +444,7 @@ class MainWindow(QMainWindow):
         edit_layout.addLayout(field_row)
 
         self._batch_apply_btn = QPushButton("Apply")
-        self._batch_apply_btn.setProperty("primary", "true")
+        self._batch_apply_btn.setStyleSheet("font-weight: bold; padding: 6px 16px;")
         self._batch_apply_btn.setToolTip("Apply the value to selected rows. If no rows are selected, applies to all visible matches.")
         self._batch_apply_btn.clicked.connect(self._on_batch_apply)
         edit_layout.addWidget(self._batch_apply_btn)
@@ -593,25 +531,18 @@ class MainWindow(QMainWindow):
     def _on_batch_finished(self, matches: list[BwItem], all_items: list[BwItem]) -> None:
         self._progress.setVisible(False)
         self._batch_table.set_items(matches)
-        self._batch_empty.setVisible(len(matches) == 0)
-        fade_in(self._batch_table, duration=300)
         self._batch_status.setText(f"Found {len(matches)} matching item(s)")
         self._status.setText(f"Search complete: {len(matches)} matches")
         self._update_batch_field_combo(matches)
         self._on_batch_selection_changed()
-        if matches:
-            self._toast(f"Found {len(matches)} matches", kind="success")
 
     def _on_batch_error(self, msg: str) -> None:
         self._progress.setVisible(False)
-        self._toast(f"Search failed: {msg}", kind="error")
         QMessageBox.critical(self, "Error", f"Search failed:\n{msg}")
 
     def _on_batch_clear(self) -> None:
         self._batch_table.clearContents()
         self._batch_table.setRowCount(0)
-        self._batch_empty.setVisible(True)
-        self._batch_empty.set_text("No search results", "Enter a query and click Search to find items.", "🔍")
         self._batch_status.setText("No search performed yet")
         self._batch_query.clear()
         self._batch_apply_btn.setText("Apply")
@@ -660,7 +591,6 @@ class MainWindow(QMainWindow):
         try:
             records = apply_batch_edit(self._items, matches, field, value)
             self._batch_table.set_items(matches)
-            self._batch_empty.setVisible(len(matches) == 0)
             self._overview_table.set_items(self._items)
             self._update_stats()
             self._batch_status.setText(f"Edited {len(records)} item(s) — field: {field}")
@@ -673,7 +603,6 @@ class MainWindow(QMainWindow):
                 save_vault(out_path, self._items, self._raw_data)
                 if records:
                     create_batch_edit_log(records, out_path)
-                self._toast(f"Batch edit complete — {len(records)} items edited", kind="success")
                 QMessageBox.information(
                     self, "Batch Edit Complete",
                     f"Edited {len(records)} items.\n"
@@ -681,7 +610,6 @@ class MainWindow(QMainWindow):
                     f"Backup: {backup}"
                 )
             else:
-                self._toast(f"Batch edit complete — {len(records)} items edited", kind="success")
                 QMessageBox.information(
                     self, "Batch Edit Complete",
                     f"Edited {len(records)} items.\n\n"
@@ -724,26 +652,19 @@ class MainWindow(QMainWindow):
             self._btn_save.setEnabled(True)
             self._update_stats()
             self._overview_table.set_items(self._items)
-            self._overview_empty.setVisible(False)
-            fade_in(self._overview_table, duration=350)
             self._status.setText(f"Loaded {len(self._items)} items from {self._vault_path.name}")
-            self._toast(f"Loaded {len(self._items)} items", kind="success")
 
             # Clear all dedup state from previous vault
             self._clusters = []
             self._cluster_infos = []
             self._dedup_table.clearContents()
             self._dedup_table.setRowCount(0)
-            self._dedup_empty.setVisible(True)
-            self._dedup_empty.set_text("No duplicates found", "Run 'Analyze Duplicates' to scan for duplicate items.", "🔍")
             self._dedup_detail.clear()
             self._btn_dedup_merge.setEnabled(False)
 
             # Clear all batch editor state from previous vault
             self._batch_table.clearContents()
             self._batch_table.setRowCount(0)
-            self._batch_empty.setVisible(True)
-            self._batch_empty.set_text("No search results", "Enter a query and click Search to find items.", "🔍")
             self._batch_status.setText("No search performed yet")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load vault:\n{e}")
@@ -760,7 +681,6 @@ class MainWindow(QMainWindow):
         try:
             save_vault(Path(path), self._items, self._raw_data)
             self._status.setText(f"Saved to {Path(path).name}")
-            self._toast(f"Saved to {Path(path).name}", kind="success")
             QMessageBox.information(self, "Saved", f"Vault saved to:\n{path}")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save vault:\n{e}")
@@ -804,20 +724,14 @@ class MainWindow(QMainWindow):
         self._status.setText(f"Found {len(clusters)} clusters ({total_comp:,} comparisons)")
 
         if not clusters:
-            self._dedup_empty.setVisible(True)
-            self._dedup_empty.set_text("No duplicates found", "No duplicate clusters detected with current settings.", "\u2705")
             QMessageBox.information(self, "No Duplicates", "No duplicate clusters found.")
             return
 
         self._btn_dedup_merge.setEnabled(True)
-        self._dedup_empty.setVisible(False)
         self._populate_dedup_table(clusters)
-        fade_in(self._dedup_table, duration=350)
-        self._toast(f"Found {len(clusters)} duplicate clusters", kind="success")
 
     def _on_dedup_error(self, msg: str) -> None:
         self._progress.setVisible(False)
-        self._toast(f"Analysis failed: {msg}", kind="error")
         QMessageBox.critical(self, "Error", f"Analysis failed:\n{msg}")
 
     def _populate_dedup_table(self, clusters: list[list[BwItem]]) -> None:
@@ -872,7 +786,7 @@ class MainWindow(QMainWindow):
         cluster = self._clusters[row]
         lines = [f"Cluster #{row + 1} — {len(cluster)} items (confidence: {cluster_confidence(cluster):.0%})"]
         for i, item in enumerate(cluster):
-            marker = "\u2605" if i == pick_primary(cluster) else " "
+            marker = "★" if i == pick_primary(cluster) else " "
             lines.append(f"  {marker} {item.name}")
             if item.login:
                 lines.append(f"      User: {item.login.username or '(none)'} | Domain: {item.get_domains() or '(none)'}")
@@ -979,7 +893,6 @@ class MainWindow(QMainWindow):
                     output_path=self._vault_path.with_suffix(".report.html"),
                 )
                 self._status.setText(f"Merged {len(merged_away_ids)} items. Saved to {out_path.name}")
-                self._toast(f"Merged {len(merged_away_ids)} items", kind="success")
                 QMessageBox.information(
                     self, "Merge Complete",
                     f"Merged {len(merged_away_ids)} duplicate items.\n"
@@ -988,7 +901,6 @@ class MainWindow(QMainWindow):
                 )
             else:
                 self._status.setText(f"Merged {len(merged_away_ids)} items. Save vault to persist.")
-                self._toast(f"Merged {len(merged_away_ids)} items", kind="success")
                 QMessageBox.information(
                     self, "Merge Complete",
                     f"Merged {len(merged_away_ids)} duplicate items.\n\n"
@@ -996,14 +908,11 @@ class MainWindow(QMainWindow):
                 )
 
             self._dedup_table.setRowCount(0)
-            self._dedup_empty.setVisible(True)
-            self._dedup_empty.set_text("Merge complete", "All duplicate clusters have been merged.", "\u2705")
             self._dedup_detail.clear()
             self._btn_dedup_merge.setEnabled(False)
             self._clusters = []
 
         except Exception as e:
-            self._toast(f"Merge failed: {e}", kind="error")
             QMessageBox.critical(self, "Error", f"Merge failed:\n{e}")
 
     def _on_dedup_dry_run(self) -> None:
@@ -1046,21 +955,18 @@ class MainWindow(QMainWindow):
                     filename=self._vault_path.name,
                     output_path=self._vault_path.with_suffix(".report.html"),
                 )
-                self._toast(f"Dry-run report saved", kind="success")
                 QMessageBox.information(
                     self, "Dry Run Complete",
                     f"Would merge {len(proposed)} clusters.\n"
                     f"Report saved to {self._vault_path.with_suffix('.report.html')}"
                 )
             else:
-                self._toast(f"Would merge {len(proposed)} clusters", kind="info")
                 QMessageBox.information(
                     self, "Dry Run Complete",
                     f"Would merge {len(proposed)} clusters.\n"
                     f"Load a vault file to generate an HTML report."
                 )
         except Exception as e:
-            self._toast(f"Dry run failed: {e}", kind="error")
             QMessageBox.critical(self, "Error", f"Dry run failed:\n{e}")
 
     # --- Batch Editor ---

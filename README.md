@@ -48,7 +48,18 @@ After years of use, Bitwarden vaults accumulate duplicate entries:
 
 ## 🚀 Quick Start
 
-### 1. Install
+### Option 1: Download Pre-built Release (No Setup Required)
+
+1. Go to [GitHub Releases](https://github.com/porkmagus/bitmerger/releases)
+2. Download the latest release for your platform:
+   - **macOS:** `Bitmerger-macos.zip` — unzip and double-click `Bitmerger.app`
+   - **Windows:** `Bitmerger-windows.zip` — unzip and run `Bitmerger.exe`
+   - **Linux:** `Bitmerger-linux.tar.gz` — extract and run `./Bitmerger/Bitmerger`
+3. Export your Bitwarden vault as JSON and open it in Bitmerger
+
+### Option 2: Run from Source
+
+#### 1. Install
 
 ```bash
 # Clone or download this repo

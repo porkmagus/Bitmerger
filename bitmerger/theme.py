@@ -130,9 +130,9 @@ class ThemeManager(QObject):
             background: {p["bg"]};
             color: {p["fg"]};
         }}
-        QWidget {{
+        QFrame, QScrollArea, QStackedWidget {{
             background: {p["bg"]};
-            color: {p["fg"]};
+            border: none;
         }}
         /* Round 1: Global smooth transitions */
         QPushButton, QLineEdit, QTextEdit, QComboBox, QSpinBox, QDoubleSpinBox, QCheckBox::indicator {{
@@ -239,7 +239,7 @@ class ThemeManager(QObject):
         }}
         QTableWidget::item:selected {{
             background: {p["selection"]};
-            color: #ffffff;
+            color: {p["bg"]};
             border-radius: 4px;
         }}
         QTableWidget::item {{
@@ -323,7 +323,7 @@ class ThemeManager(QObject):
         }}
         QCheckBox::indicator:checked::after {{
             content: "✓";
-            color: white;
+            color: {p["bg"]};
             font-weight: bold;
         }}
         QSpinBox, QDoubleSpinBox {{
@@ -416,7 +416,7 @@ class ThemeManager(QObject):
         }}
         QMenu::item:selected {{
             background: {p["accent"]};
-            color: #ffffff;
+            color: {p["bg"]};
         }}
         QMenu::separator {{
             height: 1px;

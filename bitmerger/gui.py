@@ -141,7 +141,7 @@ class MainWindow(QMainWindow):
         self._rename_worker: Optional[RenameWorker] = None
 
         self._build_ui()
-        self._apply_styles()
+        
 
     # --- UI construction ---
 
@@ -163,7 +163,6 @@ class MainWindow(QMainWindow):
         # Vault file row
         file_row = QHBoxLayout()
         self._file_label = QLabel("No vault loaded")
-        self._file_label.setStyleSheet("color: #888;")
         file_row.addWidget(self._file_label, 1)
 
         btn_load = QPushButton("Load Vault…")
@@ -182,7 +181,7 @@ class MainWindow(QMainWindow):
 
         # Stats bar
         self._stats_label = QLabel("Items: 0 | Logins: 0 | Notes: 0 | Cards: 0 | Identities: 0 | SSH: 0")
-        self._stats_label.setStyleSheet("color: #666; font-size: 12px;")
+        self._stats_label.setStyleSheet("font-size: 12px;")
         layout.addWidget(self._stats_label)
 
         # Tabs
@@ -195,7 +194,7 @@ class MainWindow(QMainWindow):
 
         # Status bar
         self._status = QLabel("Ready")
-        self._status.setStyleSheet("color: #666; padding: 4px;")
+        self._status.setStyleSheet("padding: 4px;")
         layout.addWidget(self._status)
 
         self._progress = QProgressBar()
@@ -388,43 +387,13 @@ class MainWindow(QMainWindow):
         results_layout.addWidget(self._rename_table)
 
         self._rename_status = QLabel("No search performed yet")
-        self._rename_status.setStyleSheet("color: #666;")
+        self._rename_status.setStyleSheet("")
         results_layout.addWidget(self._rename_status)
 
         layout.addWidget(results, 1)
         return w
 
-    def _apply_styles(self) -> None:
-        self.setStyleSheet("""
-            QGroupBox {
-                font-weight: bold;
-                border: 1px solid #ccc;
-                border-radius: 6px;
-                margin-top: 8px;
-                padding-top: 8px;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 8px;
-                padding: 0 4px;
-            }
-            QPushButton {
-                border-radius: 4px;
-                padding: 4px 12px;
-            }
-            QPushButton:hover {
-                background-color: #e0e0e0;
-            }
-            QTableWidget {
-                gridline-color: #ddd;
-            }
-            QHeaderView::section {
-                background-color: #f0f0f0;
-                padding: 4px;
-                border: 1px solid #ddd;
-                font-weight: bold;
-            }
-        """)
+
 
     # --- Event handlers ---
 
@@ -438,7 +407,7 @@ class MainWindow(QMainWindow):
             self._vault_path = Path(path)
             self._items, self._raw_data = load_vault(self._vault_path)
             self._file_label.setText(str(self._vault_path))
-            self._file_label.setStyleSheet("color: #333;")
+            
             self._btn_save.setEnabled(True)
             self._update_stats()
             self._overview_table.set_items(self._items)

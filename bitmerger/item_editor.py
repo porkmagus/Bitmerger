@@ -148,7 +148,7 @@ class ItemEditor(QScrollArea):
 
         # TOTP countdown timer
         self._totp_timer = QLabel("")
-        self._totp_timer.setStyleSheet("font-size: 11px; color: #656d76; padding: 4px 0;")
+        self._totp_timer.setStyleSheet("font-size: 11px; padding: 4px 0;")
         login_layout.addWidget(self._totp_timer)
         from PySide6.QtCore import QTimer
         self._totp_countdown = QTimer(self)
@@ -278,7 +278,7 @@ class ItemEditor(QScrollArea):
         self._notes_edit.textChanged.connect(self._update_notes_count)
         notes_layout.addWidget(self._notes_edit)
         self._notes_count = QLabel("")
-        self._notes_count.setStyleSheet("font-size: 11px; color: #656d76; padding: 4px 0;")
+        self._notes_count.setStyleSheet("font-size: 11px; padding: 4px 0;")
         notes_layout.addWidget(self._notes_count)
         self._tabs.addTab(notes_tab, " Notes")
 

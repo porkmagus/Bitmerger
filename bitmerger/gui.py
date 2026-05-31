@@ -82,28 +82,27 @@ class VaultTable(QTableWidget):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._folder_map: Dict[str, str] = {}
+        self._current_items: list[BwItem] = []
         self.setColumnCount(9)
         self.setHorizontalHeaderLabels(["Type", "Name", "Username", "Domain", "Favorite", "Reprompt", "Folder", "Notes", "ID"])
         self.horizontalHeader().setStretchLastSection(True)
-        self.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self.horizontalHeader().setHighlightSections(False)
         self.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self.setAlternatingRowColors(True)
         self.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.setSortingEnabled(True)
 
     def set_folder_map(self, folder_map: Dict[str, str]) -> None:
         self._folder_map = folder_map
 
     def set_items(self, items: list[BwItem]) -> None:
-        # Performance optimization for large vaults: disable updates,
-        # block signals, and temporarily switch header to Interactive mode
-        # (ResizeToContents is O(n²) for thousands of rows).
+        self._current_items = items
+        # Disable sorting while repopulating to avoid sort-comparison issues
+        self.setSortingEnabled(False)
         self.blockSignals(True)
         self.setUpdatesEnabled(False)
-        header = self.horizontalHeader()
-        old_resize_mode = header.sectionResizeMode(0)
-        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
 
         self.clearContents()
         self.setRowCount(0)
@@ -132,11 +131,9 @@ class VaultTable(QTableWidget):
             self.setItem(row, 7, QTableWidgetItem(notes))
             self.setItem(row, 8, QTableWidgetItem(item.id))
 
-        header.setSectionResizeMode(old_resize_mode)
         self.setUpdatesEnabled(True)
         self.blockSignals(False)
-        # Force one resize pass now that all data is in
-        header.resizeSections(QHeaderView.ResizeMode.ResizeToContents)
+        self.setSortingEnabled(True)
         self.viewport().update()
 
     def get_selected_items(self, all_items: list[BwItem]) -> list[BwItem]:
@@ -152,6 +149,9 @@ class VaultTable(QTableWidget):
                     selected.append(item)
                     break
         return selected
+
+    def get_current_items(self) -> list[BwItem]:
+        return self._current_items
 
 
 # ---------------------------------------------------------------------------
@@ -337,10 +337,11 @@ class MainWindow(QMainWindow):
         self._dedup_table.setColumnCount(6)
         self._dedup_table.setHorizontalHeaderLabels(["Cluster", "Type", "Count", "Names", "Confidence", "Key"])
         self._dedup_table.horizontalHeader().setStretchLastSection(True)
-        self._dedup_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self._dedup_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self._dedup_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._dedup_table.setAlternatingRowColors(True)
         self._dedup_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._dedup_table.setSortingEnabled(True)
         results_layout.addWidget(self._dedup_table)
 
         self._dedup_detail = QTextEdit()
@@ -410,6 +411,7 @@ class MainWindow(QMainWindow):
         results_layout = QVBoxLayout(results)
 
         self._batch_table = VaultTable()
+        self._batch_table.itemSelectionChanged.connect(self._on_batch_selection_changed)
         results_layout.addWidget(self._batch_table)
 
         self._batch_status = QLabel("No search performed yet")
@@ -424,7 +426,6 @@ class MainWindow(QMainWindow):
         field_row = QHBoxLayout()
         field_row.addWidget(QLabel("Field:"))
         self._batch_field_combo = QComboBox()
-        self._batch_field_combo.addItems(["Name", "Username", "Notes", "Favorite", "Reprompt", "Folder"])
         self._batch_field_combo.setToolTip("Select the field to edit for all selected (or all visible) items")
         self._batch_field_combo.currentTextChanged.connect(self._on_batch_field_changed)
         field_row.addWidget(self._batch_field_combo)
@@ -442,14 +443,57 @@ class MainWindow(QMainWindow):
         field_row.addStretch()
         edit_layout.addLayout(field_row)
 
-        btn_apply = QPushButton("Apply to Selected")
-        btn_apply.setStyleSheet("font-weight: bold; padding: 6px 16px;")
-        btn_apply.setToolTip("Apply the value to selected rows. If no rows are selected, applies to all visible matches.")
-        btn_apply.clicked.connect(self._on_batch_apply)
-        edit_layout.addWidget(btn_apply)
+        self._batch_apply_btn = QPushButton("Apply")
+        self._batch_apply_btn.setStyleSheet("font-weight: bold; padding: 6px 16px;")
+        self._batch_apply_btn.setToolTip("Apply the value to selected rows. If no rows are selected, applies to all visible matches.")
+        self._batch_apply_btn.clicked.connect(self._on_batch_apply)
+        edit_layout.addWidget(self._batch_apply_btn)
 
         layout.addWidget(edit_group)
         return w
+
+    def _update_batch_field_combo(self, items: list[BwItem]) -> None:
+        """Populate the field dropdown based on what fields are present in the matched items."""
+        has_name = any(i.name for i in items)
+        has_username = any(i.login and i.login.username for i in items)
+        has_domain = any(i.login and i.login.uris for i in items)
+        has_notes = any(i.notes for i in items)
+        has_folder = any(i.folderId for i in items)
+
+        fields = []
+        if has_name:
+            fields.append("Name")
+        if has_username:
+            fields.append("Username")
+        if has_domain:
+            fields.append("Domain")
+        if has_notes:
+            fields.append("Notes")
+        # Always show these since they are flags on every item
+        fields.append("Favorite")
+        fields.append("Reprompt")
+        if has_folder:
+            fields.append("Folder")
+
+        if not fields:
+            fields = ["Name", "Favorite", "Reprompt"]
+
+        current = self._batch_field_combo.currentText()
+        self._batch_field_combo.clear()
+        self._batch_field_combo.addItems(fields)
+        if current in fields:
+            self._batch_field_combo.setCurrentText(current)
+        else:
+            self._batch_field_combo.setCurrentIndex(0)
+        self._on_batch_field_changed(self._batch_field_combo.currentText())
+
+    def _on_batch_selection_changed(self) -> None:
+        selected = self._batch_table.get_selected_items(self._items)
+        if selected:
+            self._batch_apply_btn.setText(f"Apply to {len(selected)} Selected")
+        else:
+            visible = self._batch_table.rowCount()
+            self._batch_apply_btn.setText(f"Apply to All ({visible})")
 
     def _on_batch_field_changed(self, text: str) -> None:
         is_bool = text in ("Favorite", "Reprompt")
@@ -459,6 +503,7 @@ class MainWindow(QMainWindow):
         if is_bool:
             self._batch_bool_check.setText(f"Set {text}")
             self._batch_bool_check.setChecked(True)
+        self._on_batch_selection_changed()
 
     def _on_batch_search(self) -> None:
         if not self._items:
@@ -488,6 +533,8 @@ class MainWindow(QMainWindow):
         self._batch_table.set_items(matches)
         self._batch_status.setText(f"Found {len(matches)} matching item(s)")
         self._status.setText(f"Search complete: {len(matches)} matches")
+        self._update_batch_field_combo(matches)
+        self._on_batch_selection_changed()
 
     def _on_batch_error(self, msg: str) -> None:
         self._progress.setVisible(False)
@@ -498,6 +545,8 @@ class MainWindow(QMainWindow):
         self._batch_table.setRowCount(0)
         self._batch_status.setText("No search performed yet")
         self._batch_query.clear()
+        self._batch_apply_btn.setText("Apply")
+        self._batch_field_combo.clear()
 
     def _on_batch_apply(self) -> None:
         field = self._batch_field_combo.currentText().lower()
@@ -511,6 +560,7 @@ class MainWindow(QMainWindow):
                 return
 
         matches = self._batch_table.get_selected_items(self._items)
+        target_desc = f"{len(matches)} selected"
         if not matches:
             # apply to all visible
             matches = []
@@ -523,6 +573,7 @@ class MainWindow(QMainWindow):
                     if item.id == item_id:
                         matches.append(item)
                         break
+            target_desc = f"all {len(matches)} visible"
 
         if not matches:
             QMessageBox.warning(self, "Warning", "No items to edit.")
@@ -530,7 +581,7 @@ class MainWindow(QMainWindow):
 
         reply = QMessageBox.question(
             self, "Confirm Batch Edit",
-            f"Apply '{field}' = '{value}' to {len(matches)} item(s)?",
+            f"Apply '{field}' = '{value}' to {target_desc} item(s)?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No
         )
@@ -544,6 +595,7 @@ class MainWindow(QMainWindow):
             self._update_stats()
             self._batch_status.setText(f"Edited {len(records)} item(s) — field: {field}")
             self._status.setText(f"Batch edit complete: {len(records)} items")
+            self._on_batch_selection_changed()
 
             if self._vault_path:
                 backup = create_backup(self._vault_path)

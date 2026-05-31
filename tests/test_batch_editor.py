@@ -231,6 +231,68 @@ class TestBatchEdit(unittest.TestCase):
         records = apply_batch_edit(items, items, "folder", "f1")
         self.assertEqual(items[0].folderId, "f1")
 
+    def test_apply_domain_existing_uri(self):
+        items = [
+            BwItem(id="a", type=1, name="A", login=LoginData(uris=[UriEntry(uri="https://old.com/path")])),
+        ]
+        records = apply_batch_edit(items, items, "domain", "new.com")
+        assert items[0].login is not None
+        assert items[0].login.uris
+        self.assertEqual(items[0].login.uris[0].uri, "https://new.com/path")
+        self.assertEqual(records[0].old_value, "old.com")
+        self.assertEqual(records[0].new_value, "new.com")
+
+    def test_apply_domain_full_url_value(self):
+        items = [
+            BwItem(id="a", type=1, name="A", login=LoginData(uris=[UriEntry(uri="https://old.com/path")])),
+        ]
+        records = apply_batch_edit(items, items, "domain", "http://localhost:8080")
+        assert items[0].login is not None
+        assert items[0].login.uris
+        self.assertEqual(items[0].login.uris[0].uri, "http://localhost:8080")
+
+    def test_apply_domain_creates_uri(self):
+        items = [
+            BwItem(id="a", type=1, name="A", login=LoginData()),
+        ]
+        records = apply_batch_edit(items, items, "domain", "192.168.1.1")
+        assert items[0].login is not None
+        assert items[0].login.uris
+        self.assertEqual(items[0].login.uris[0].uri, "http://192.168.1.1")
+
+    def test_apply_domain_preserves_port(self):
+        items = [
+            BwItem(id="a", type=1, name="A", login=LoginData(uris=[UriEntry(uri="https://old.com:8443/path")])),
+        ]
+        records = apply_batch_edit(items, items, "domain", "new.com")
+        assert items[0].login is not None
+        assert items[0].login.uris
+        self.assertEqual(items[0].login.uris[0].uri, "https://new.com:8443/path")
+
+    def test_apply_domain_no_login(self):
+        items = [
+            BwItem(id="a", type=1, name="A", login=None),
+        ]
+        records = apply_batch_edit(items, items, "domain", "example.com")
+        assert items[0].login is not None
+        assert items[0].login.uris
+        self.assertEqual(items[0].login.uris[0].uri, "http://example.com")
+
+    def test_get_domain_value(self):
+        item = BwItem(id="a", type=1, name="A", login=LoginData(uris=[UriEntry(uri="https://github.com")]))
+        from bitmerger.core import _get_field_value
+        self.assertEqual(_get_field_value(item, "domain"), "github.com")
+
+    def test_get_domain_no_uris(self):
+        item = BwItem(id="a", type=1, name="A", login=LoginData())
+        from bitmerger.core import _get_field_value
+        self.assertIsNone(_get_field_value(item, "domain"))
+
+    def test_get_domain_no_login(self):
+        item = BwItem(id="a", type=1, name="A", login=None)
+        from bitmerger.core import _get_field_value
+        self.assertIsNone(_get_field_value(item, "domain"))
+
 
 class TestBatchEditLog(unittest.TestCase):
     def test_creates_log(self):

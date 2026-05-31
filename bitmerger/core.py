@@ -1117,6 +1117,10 @@ def _get_field_value(item: BwItem, field: str) -> Any:
         return item.name
     if field == "username":
         return item.login.username if item.login else None
+    if field == "domain":
+        if not item.login or not item.login.uris:
+            return None
+        return normalize_domain(item.login.uris[0].uri) or ""
     if field == "notes":
         return item.notes
     if field == "favorite":
@@ -1136,6 +1140,32 @@ def _set_field_value(item: BwItem, field: str, value: Any) -> None:
         if item.login is None:
             item.login = LoginData()
         item.login.username = str(value) if value else None
+    elif field == "domain":
+        if item.login is None:
+            item.login = LoginData()
+        val = str(value) if value else ""
+        if item.login.uris:
+            # Update the first URI's domain while preserving scheme if possible
+            old_uri = item.login.uris[0].uri
+            if old_uri:
+                try:
+                    parsed = urllib.parse.urlparse(old_uri)
+                    # If new value is a full URL, replace entirely
+                    if val.startswith(("http://", "https://", "ftp://", "ssh://", "androidapp://")):
+                        new_uri = val
+                    else:
+                        # Replace just the host, keep scheme/path/query
+                        new_netloc = val
+                        if parsed.port:
+                            new_netloc = f"{val}:{parsed.port}"
+                        new_uri = urllib.parse.urlunparse(parsed._replace(netloc=new_netloc))
+                except Exception:
+                    new_uri = val if val.startswith("http") else f"http://{val}"
+            else:
+                new_uri = val if val.startswith("http") else f"http://{val}"
+            item.login.uris[0].uri = new_uri
+        else:
+            item.login.uris = [UriEntry(uri=val if val.startswith("http") else f"http://{val}")]
     elif field == "notes":
         item.notes = str(value) if value else None
     elif field == "favorite":

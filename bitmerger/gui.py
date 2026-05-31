@@ -83,6 +83,7 @@ class VaultTable(QTableWidget):
         self.setHorizontalHeaderLabels(["Type", "Name", "Username", "Domain", "ID"])
         self.horizontalHeader().setStretchLastSection(True)
         self.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.horizontalHeader().setHighlightSections(False)
         self.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self.setAlternatingRowColors(True)
@@ -128,6 +129,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Bitmerger — Bitwarden Vault Utility")
+        self.setWindowIcon(QIcon())  # Placeholder for custom icon
         self.setMinimumSize(1000, 700)
 
         self._vault_path: Optional[Path] = None
@@ -222,6 +224,7 @@ class MainWindow(QMainWindow):
         # Settings group
         settings = QGroupBox("Deduplication Settings")
         settings_layout = QVBoxLayout(settings)
+        settings_layout.setSpacing(10)
 
         # Threshold
         thresh_row = QHBoxLayout()
@@ -231,7 +234,7 @@ class MainWindow(QMainWindow):
         self._thresh_spin.setSingleStep(0.05)
         self._thresh_spin.setValue(0.85)
         self._thresh_spin.setDecimals(2)
-        self._thresh_spin.setToolTip("Minimum similarity score (0.0–1.0) to consider items duplicates")
+        self._thresh_spin.setToolTip("Minimum similarity score (0.0–1.0) to consider items duplicates. Higher = fewer matches, more strict.")
         thresh_row.addWidget(self._thresh_spin)
         thresh_row.addStretch()
         settings_layout.addLayout(thresh_row)
@@ -252,12 +255,14 @@ class MainWindow(QMainWindow):
         # Confidence filter
         conf_row = QHBoxLayout()
         self._conf_check = QCheckBox("Only auto-merge clusters above confidence:")
+        self._conf_check.setToolTip("Skip low-confidence clusters to avoid false positives")
         self._conf_spin = QDoubleSpinBox()
         self._conf_spin.setRange(0.0, 1.0)
         self._conf_spin.setSingleStep(0.05)
         self._conf_spin.setValue(0.95)
         self._conf_spin.setDecimals(2)
         self._conf_spin.setEnabled(False)
+        self._conf_spin.setToolTip("Confidence threshold for auto-merge. 0.95 = very high confidence only.")
         self._conf_check.toggled.connect(self._conf_spin.setEnabled)
         conf_row.addWidget(self._conf_check)
         conf_row.addWidget(self._conf_spin)
@@ -266,7 +271,7 @@ class MainWindow(QMainWindow):
 
         # Fast mode
         self._fast_check = QCheckBox("Fast mode (skip expensive fuzzy matching)")
-        self._fast_check.setToolTip("Slightly faster but may miss fuzzy duplicates")
+        self._fast_check.setToolTip("Skip fuzzy name matching for ~2x speed. May miss duplicates with similar but not identical names.")
         settings_layout.addWidget(self._fast_check)
 
         # Buttons
@@ -307,8 +312,9 @@ class MainWindow(QMainWindow):
 
         self._dedup_detail = QTextEdit()
         self._dedup_detail.setReadOnly(True)
-        self._dedup_detail.setMaximumHeight(120)
-        self._dedup_detail.setPlaceholderText("Select a cluster to view details")
+        self._dedup_detail.setMaximumHeight(140)
+        self._dedup_detail.setPlaceholderText("Select a cluster to view details. Run 'Analyze Duplicates' to find duplicate items.")
+        self._dedup_detail.setStyleSheet("font-size: 12px; padding: 8px;")
         results_layout.addWidget(self._dedup_detail)
 
         self._dedup_table.itemSelectionChanged.connect(self._on_dedup_selection_changed)
@@ -330,7 +336,7 @@ class MainWindow(QMainWindow):
         query_row.addWidget(QLabel("Search Query:"))
         self._rename_query = QLineEdit()
         self._rename_query.setPlaceholderText("google+mail.google — '+' means OR")
-        self._rename_query.setToolTip("Enter search terms. Use + to OR multiple terms.")
+        self._rename_query.setToolTip("Enter search terms. Use + to OR multiple terms. Example: 'google+mail' matches items with 'google' OR 'mail'.")
         query_row.addWidget(self._rename_query, 1)
         search_layout.addLayout(query_row)
 
@@ -339,6 +345,7 @@ class MainWindow(QMainWindow):
         replace_row.addWidget(QLabel("New Name:"))
         self._rename_replace = QLineEdit()
         self._rename_replace.setPlaceholderText("e.g., Google")
+        self._rename_replace.setToolTip("New name for all matched items")
         replace_row.addWidget(self._rename_replace, 1)
         search_layout.addLayout(replace_row)
 
@@ -423,7 +430,7 @@ class MainWindow(QMainWindow):
 
     def _on_load_vault(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "Open Bitwarden Vault", "", "JSON Files (*.json);;All Files (*)"
+            self, "Open Bitwarden Vault Export", "", "JSON Files (*.json);;All Files (*)"
         )
         if not path:
             return
@@ -450,7 +457,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Warning", "No vault loaded to save.")
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save Vault", "vault_clean.json", "JSON Files (*.json);;All Files (*)"
+            self, "Save Vault Export", "vault_clean.json", "JSON Files (*.json);;All Files (*)"
         )
         if not path:
             return

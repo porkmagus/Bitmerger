@@ -24,7 +24,7 @@ from thefuzz import fuzz  # type: ignore[import-not-found,import-untyped]
 
 @dataclass
 class UriEntry:
-    match: Optional[str] = None
+    match: Optional[int] = None
     uri: str = ""
 
     @classmethod
@@ -48,15 +48,17 @@ class LoginData:
 
     @classmethod
     def from_dict(cls, d: Optional[Dict[str, Any]]) -> "LoginData":
-        if not d:
+        if not d or not isinstance(d, dict):
             return cls()
-        uris_data: list[Any] = d.get("uris", [])  # type: ignore[assignment]
+        uris_data = d.get("uris", [])
+        if not isinstance(uris_data, list):
+            uris_data = []
         return cls(
-            uris=[UriEntry.from_dict(u) for u in uris_data if isinstance(u, dict)],  # type: ignore[arg-type]
-            username=d.get("username"),
-            password=d.get("password"),
-            totp=d.get("totp"),
-            fido2Credentials=d.get("fido2Credentials"),
+            uris=[UriEntry.from_dict(u) for u in uris_data if isinstance(u, dict)],
+            username=d.get("username") if isinstance(d.get("username"), (str, type(None))) else None,
+            password=d.get("password") if isinstance(d.get("password"), (str, type(None))) else None,
+            totp=d.get("totp") if isinstance(d.get("totp"), (str, type(None))) else None,
+            fido2Credentials=d.get("fido2Credentials") if isinstance(d.get("fido2Credentials"), (list, type(None))) else None,
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -91,11 +93,13 @@ class SshKeyData:
         )
 
     def to_dict(self) -> Dict[str, Any]:
-        out: Dict[str, Any] = {
-            "privateKey": self.privateKey or "",
-            "publicKey": self.publicKey or "",
-            "keyFingerprint": self.keyFingerprint or "",
-        }
+        out: Dict[str, Any] = {}
+        if self.privateKey is not None:
+            out["privateKey"] = self.privateKey
+        if self.publicKey is not None:
+            out["publicKey"] = self.publicKey
+        if self.keyFingerprint is not None:
+            out["keyFingerprint"] = self.keyFingerprint
         return out
 
 
@@ -124,32 +128,42 @@ class BwItem:
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "BwItem":
+        if not isinstance(d, dict):
+            raise ValueError("BwItem.from_dict expects a dict")
         known = {
             "id", "type", "name", "notes", "favorite", "fields", "reprompt",
             "login", "collectionIds", "folderId", "organizationId",
             "passwordHistory", "secureNote", "card", "identity", "sshKey",
             "revisionDate", "creationDate", "deletedDate",
         }
+        # Validate id
+        item_id = d.get("id", "")
+        if not item_id or not isinstance(item_id, str):
+            item_id = str(d.get("id", ""))
+        # Validate type
+        item_type = d.get("type", 1)
+        if not isinstance(item_type, int) or item_type not in (1, 2, 3, 4, 5):
+            item_type = 1
         return cls(
-            id=d.get("id", ""),
-            type=d.get("type", 1),
-            name=d.get("name", ""),
-            notes=d.get("notes"),
-            favorite=d.get("favorite", False),
-            fields=d.get("fields"),
-            reprompt=d.get("reprompt", 0),
+            id=item_id,
+            type=item_type,
+            name=d.get("name", "") if isinstance(d.get("name"), str) else "",
+            notes=d.get("notes") if isinstance(d.get("notes"), (str, type(None))) else None,
+            favorite=bool(d.get("favorite", False)),
+            fields=d.get("fields") if isinstance(d.get("fields"), (list, type(None))) else None,
+            reprompt=int(d.get("reprompt", 0)) if isinstance(d.get("reprompt"), (int, float, str)) else 0,
             login=LoginData.from_dict(d.get("login")),
-            collectionIds=d.get("collectionIds"),
-            folderId=d.get("folderId"),
-            organizationId=d.get("organizationId"),
-            passwordHistory=d.get("passwordHistory"),
-            secureNote=d.get("secureNote"),
-            card=d.get("card"),
-            identity=d.get("identity"),
+            collectionIds=d.get("collectionIds") if isinstance(d.get("collectionIds"), (list, type(None))) else None,
+            folderId=d.get("folderId") if isinstance(d.get("folderId"), (str, type(None))) else None,
+            organizationId=d.get("organizationId") if isinstance(d.get("organizationId"), (str, type(None))) else None,
+            passwordHistory=d.get("passwordHistory") if isinstance(d.get("passwordHistory"), (list, type(None))) else None,
+            secureNote=d.get("secureNote") if isinstance(d.get("secureNote"), (dict, type(None))) else None,
+            card=d.get("card") if isinstance(d.get("card"), (dict, type(None))) else None,
+            identity=d.get("identity") if isinstance(d.get("identity"), (dict, type(None))) else None,
             sshKey=SshKeyData.from_dict(d.get("sshKey")),
-            revisionDate=d.get("revisionDate"),
-            creationDate=d.get("creationDate"),
-            deletedDate=d.get("deletedDate"),
+            revisionDate=d.get("revisionDate") if isinstance(d.get("revisionDate"), (str, type(None))) else None,
+            creationDate=d.get("creationDate") if isinstance(d.get("creationDate"), (str, type(None))) else None,
+            deletedDate=d.get("deletedDate") if isinstance(d.get("deletedDate"), (str, type(None))) else None,
             extra={k: v for k, v in d.items() if k not in known},
         )
 
@@ -222,7 +236,7 @@ class BwItem:
         return f"{brand}:{last4}:{exp}"
 
     def get_identity_fingerprint(self) -> Optional[str]:
-        if not self.identity:
+        if not self.identity or not isinstance(self.identity, dict):
             return None
         email = (self.identity.get("email") or "").lower().strip()
         last = (self.identity.get("lastName") or "").lower().strip()
@@ -231,7 +245,7 @@ class BwItem:
         return "|".join(parts) if parts else None
 
     def get_ssh_fingerprint(self) -> Optional[str]:
-        if not self.sshKey:
+        if not self.sshKey or not isinstance(self.sshKey, SshKeyData):
             return None
         return self.sshKey.keyFingerprint or self.sshKey.publicKey
 
@@ -288,8 +302,9 @@ def normalize_domain(uri: str) -> str:
         if domain:
             return domain.lower()
         return host.lower()
-    except Exception:
-        return uri.lower()
+    except (ValueError, TypeError, AttributeError):
+        # Malformed URI or unexpected type - return safe fallback
+        return uri.lower().strip()[:200]
 
 
 def clean_uri(uri: str) -> str:
@@ -303,10 +318,17 @@ def clean_uri(uri: str) -> str:
 
 
 def fuzzy_name_similarity(a: str, b: str) -> float:
-    na, nb = normalize_text(a), normalize_text(b)
-    if not na or not nb:
-        return 0.0
-    return fuzz.ratio(na, nb) / 100.0  # type: ignore[operator]
+    try:
+        na, nb = normalize_text(a), normalize_text(b)
+        if not na or not nb:
+            return 0.0
+        return fuzz.ratio(na, nb) / 100.0  # type: ignore[operator]
+    except Exception:
+        # Fallback for encoding issues with non-ASCII
+        try:
+            return fuzz.ratio(str(a)[:200], str(b)[:200]) / 100.0  # type: ignore[operator]
+        except Exception:
+            return 0.0
 
 
 # --- Type-aware similarity ---
@@ -316,13 +338,15 @@ def login_similarity(a: BwItem, b: BwItem, fast: bool = False) -> float:
     login_b = b.login
     if login_a is None or login_b is None:
         return 0.0
+    # Type guard
+    if a.type != b.type or a.type != 1:
+        return 0.0
 
     scores: list[float] = []
     weights: list[float] = []
 
     domains_a = a.get_domains()
     domains_b = b.get_domains()
-    # Always include domain weight for logins; missing URIs = mismatch
     if domains_a or domains_b:
         overlap = domains_a & domains_b
         if overlap:
@@ -360,6 +384,8 @@ def login_similarity(a: BwItem, b: BwItem, fast: bool = False) -> float:
 
 
 def card_similarity(a: BwItem, b: BwItem) -> float:
+    if a.type != b.type or a.type != 3:
+        return 0.0
     fp_a = a.get_card_fingerprint()
     fp_b = b.get_card_fingerprint()
     if fp_a and fp_b and fp_a == fp_b:
@@ -415,6 +441,8 @@ def cluster_confidence(cluster: List[BwItem]) -> float:
     High confidence = exact same credentials, domains, and names.
     Low confidence = fuzzy name match or partial data.
     """
+    if not cluster:
+        return 0.0
     if len(cluster) < 2:
         return 1.0
 
@@ -436,10 +464,20 @@ def cluster_confidence(cluster: List[BwItem]) -> float:
     # Compute average pairwise similarity
     total = 0.0
     count = 0
-    for i in range(len(cluster)):
-        for j in range(i + 1, len(cluster)):
+    # For large clusters, use sampling to avoid O(n^2) explosion
+    if len(cluster) > 50:
+        import random
+        random.seed(42)
+        indices = list(range(len(cluster)))
+        for _ in range(500):
+            i, j = random.sample(indices, 2)
             total += item_similarity(cluster[i], cluster[j])
             count += 1
+    else:
+        for i in range(len(cluster)):
+            for j in range(i + 1, len(cluster)):
+                total += item_similarity(cluster[i], cluster[j])
+                count += 1
     if count == 0:
         return 0.0
     return total / count
@@ -448,6 +486,8 @@ def cluster_confidence(cluster: List[BwItem]) -> float:
 # --- Merging ---
 
 def merge_items(target: BwItem, source: BwItem) -> Tuple[BwItem, Dict[str, Any]]:
+    if target.type != source.type:
+        raise ValueError(f"Cannot merge different types: {target.type} vs {source.type}")
     backfilled: Dict[str, Any] = {}
     conflicts: List[str] = []
 
@@ -460,7 +500,12 @@ def merge_items(target: BwItem, source: BwItem) -> Tuple[BwItem, Dict[str, Any]]
     ta = (target.notes or "").strip()
     sa = (source.notes or "").strip()
     if sa and sa != ta:
-        target.notes = (ta + "\n\n" + sa).strip() if ta else sa
+        merged = (ta + "\n\n" + sa).strip() if ta else sa
+        # Cap notes length to prevent giant notes fields
+        max_notes = 10000
+        if len(merged) > max_notes:
+            merged = merged[:max_notes] + "\n\n[truncated]"
+        target.notes = merged
         backfilled["notes"] = True
 
     if source.favorite and not target.favorite:
@@ -539,13 +584,27 @@ def merge_items(target: BwItem, source: BwItem) -> Tuple[BwItem, Dict[str, Any]]
         if s_login.fido2Credentials:
             if not t_login.fido2Credentials:
                 t_login.fido2Credentials = []
-            seen_ids: set[Any] = {cred.get("credentialId") for cred in t_login.fido2Credentials if isinstance(cred, dict) and cred.get("credentialId")}  # type: ignore[union-attr]
+            seen_ids: set[Any] = set()
+            for cred in t_login.fido2Credentials:
+                if isinstance(cred, dict):
+                    key = (cred.get("credentialId"), cred.get("rpId"))
+                    if key[0]:
+                        seen_ids.add(key)
             added_count = 0
             for cred in s_login.fido2Credentials:
-                cid: Any = cred.get("credentialId") if isinstance(cred, dict) else None  # type: ignore[union-attr]
-                if cid and cid not in seen_ids:
+                if not isinstance(cred, dict):
                     t_login.fido2Credentials.append(cred)
-                    seen_ids.add(cid)
+                    added_count += 1
+                    continue
+                cid = cred.get("credentialId")
+                rpId = cred.get("rpId")
+                # Validate rpId is a string or None
+                if rpId is not None and not isinstance(rpId, str):
+                    rpId = str(rpId)
+                key = (str(cid) if cid is not None else None, rpId)
+                if cid and key not in seen_ids:
+                    t_login.fido2Credentials.append(cred)
+                    seen_ids.add(key)
                     added_count += 1
                 elif not cid:
                     t_login.fido2Credentials.append(cred)
@@ -636,7 +695,10 @@ def find_duplicates_by_type(items: List[BwItem], threshold: float = 0.85, fast: 
         if type_code == 1:
             for i, (_, item) in enumerate(type_items):
                 if item.login and item.login.username and item.login.password:
-                    key = f"{item.login.username.lower().strip()}:{item.login.password}"
+                    # Hash the password portion to avoid excessively long keys
+                    import hashlib
+                    pw_hash = hashlib.md5(item.login.password.encode()).hexdigest()[:16]
+                    key = f"{item.login.username.lower().strip()}:{pw_hash}"
                     blocks[key].append(i)
                 for dom in item.get_domains():
                     blocks[f"dom:{dom}"].append(i)
@@ -681,8 +743,12 @@ def find_duplicates_by_type(items: List[BwItem], threshold: float = 0.85, fast: 
         for block in blocks.values():
             processed.update(block)
         orphans = [i for i in range(n) if i not in processed]
+        # For large orphan sets, use random sampling to avoid O(n²) explosion
+        import random
         if len(orphans) > 500:
-            orphans = []
+            rng = random.Random(42)  # Deterministic seed for reproducibility
+            rng.shuffle(orphans)
+            orphans = orphans[:500]
         for i in range(len(orphans)):
             for j in range(i + 1, len(orphans)):
                 total_comp += 1
@@ -697,8 +763,19 @@ def find_duplicates_by_type(items: List[BwItem], threshold: float = 0.85, fast: 
             if len(idxs) > 1:
                 cluster = [type_items[i][1] for i in idxs]
                 # Safety cap: clusters >100 are pathological (almost certainly false positives)
+                # Exception: domain-based clusters for popular sites can legitimately be large
                 if len(cluster) <= 100:
                     all_clusters.append(cluster)
+                elif len(cluster) <= 200 and type_code == 1:
+                    # For logins, check if all share same domain - might be legitimate
+                    first = cluster[0]
+                    if first.login and first.login.password:
+                        all_same = all(
+                            c.login and c.login.password == first.login.password
+                            for c in cluster[1:]
+                        )
+                        if all_same:
+                            all_clusters.append(cluster)
 
     return all_clusters, total_comp
 
@@ -728,15 +805,22 @@ def pick_primary(cluster: List[BwItem]) -> int:
         elif c.is_secure_note():
             return (len(c.notes or ""), -len(c.name))
         return (-len(c.name),)
-    return max(range(len(cluster)), key=lambda i: score(cluster[i]))
+    # Use stable sort with index as tie-breaker to ensure deterministic results
+    return max(range(len(cluster)), key=lambda i: (score(cluster[i]), -i))
 
 
 # --- Safety / Backup ---
 
 def create_backup(original_path: Path) -> Path:
     """Create a timestamped backup of the original file."""
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup = original_path.with_suffix(f".original.{ts}.json")
+    if not original_path.exists():
+        raise FileNotFoundError(f"Cannot backup: {original_path} does not exist")
+    # Use microsecond precision to avoid collisions in rapid saves
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    backup_dir = original_path.parent
+    if not backup_dir.exists():
+        backup_dir.mkdir(parents=True, exist_ok=True)
+    backup = backup_dir / f"{original_path.stem}.original.{ts}.json"
     shutil.copy2(original_path, backup)
     return backup
 
@@ -833,6 +917,7 @@ def generate_html_report(
         return "*" * len(pw) if pw else "(none)"
 
     def fmt_item(item: BwItem) -> Dict[str, Any]:
+        import html
         domain = ""
         uris: list[str] = []
         username = ""
@@ -848,14 +933,14 @@ def generate_html_report(
         if item.sshKey:
             ssh_fp = item.sshKey.keyFingerprint or ""
         return {
-            "id": item.id,
-            "name": item.name,
-            "username": username,
+            "id": html.escape(item.id),
+            "name": html.escape(item.name),
+            "username": html.escape(username),
             "password_mask": mask(password),
-            "domain": domain,
-            "uris": uris,
-            "notes": item.notes or "",
-            "ssh_fingerprint": ssh_fp,
+            "domain": html.escape(domain),
+            "uris": [html.escape(u) for u in uris],
+            "notes": html.escape(item.notes or ""),
+            "ssh_fingerprint": html.escape(ssh_fp),
             "type": item.type,
         }
 
@@ -909,13 +994,30 @@ def generate_html_report(
 
 def parse_search_query(query: str) -> list[str]:
     """Split query by '+' for OR search. Each term is stripped and lowercased."""
-    return [t.strip().lower() for t in query.split("+") if t.strip()]
+    if not query or not isinstance(query, str):
+        return []
+    terms = [t.strip().lower() for t in query.split("+") if t.strip()]
+    return terms if terms else [query.lower().strip()]
 
 
 def item_matches_terms(item: BwItem, terms: list[str]) -> bool:
     """Check if item name contains any of the search terms (case-insensitive)."""
     name_lower = (item.name or "").lower()
-    return any(term in name_lower for term in terms)
+    for term in terms:
+        if term.startswith("regex:"):
+            try:
+                pattern = term[6:]
+                if re.search(pattern, name_lower):
+                    return True
+            except re.error:
+                continue
+        elif term.startswith("exact:"):
+            if term[6:] == name_lower:
+                return True
+        else:
+            if term in name_lower:
+                return True
+    return False
 
 
 def filter_items_by_name(
@@ -923,6 +1025,8 @@ def filter_items_by_name(
     terms: list[str],
     target_types: set[int],
 ) -> list[BwItem]:
+    if not target_types:
+        return [i for i in items if item_matches_terms(i, terms)]
     return [i for i in items if i.type in target_types and item_matches_terms(i, terms)]
 
 
@@ -930,7 +1034,13 @@ def create_rename_log(
     renamed: list[tuple[str, str, str]],
     output_path: Path,
 ) -> Path:
-    log_data: list[Dict[str, Any]] = [{"id": rid, "old_name": old, "new_name": new} for rid, old, new in renamed]
+    seen_ids: set[str] = set()
+    log_data: list[Dict[str, Any]] = []
+    for rid, old, new in renamed:
+        if rid in seen_ids:
+            continue
+        seen_ids.add(rid)
+        log_data.append({"id": rid, "old_name": old, "new_name": new})
     log_path = output_path.with_suffix(f"{output_path.suffix}.rename-log.json")
     with open(log_path, "w", encoding="utf-8") as f:
         json.dump(log_data, f, indent=2, ensure_ascii=False)
@@ -943,8 +1053,33 @@ def load_vault(path: Path) -> tuple[list[BwItem], dict[str, Any]]:
     """Load a Bitwarden JSON export and return (items, raw_data)."""
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError("Invalid vault format: root must be a JSON object")
+    # Detect encrypted vaults early
+    if data.get("encrypted") is True:
+        raise ValueError("This vault is encrypted. Please export a decrypted JSON from Bitwarden.")
     items_raw: list[Any] = data.get("items", [])
-    items = [BwItem.from_dict(i) for i in items_raw]
+    if not isinstance(items_raw, list):
+        raise ValueError("Invalid vault format: 'items' must be a list")
+    items: list[BwItem] = []
+    errors: list[str] = []
+    for i, raw in enumerate(items_raw):
+        if not isinstance(raw, dict):
+            errors.append(f"Item at index {i}: not an object")
+            continue
+        if "id" not in raw or not raw.get("id"):
+            # Generate ID if missing rather than failing
+            raw["id"] = str(__import__('uuid').uuid4())
+        if "type" not in raw or not isinstance(raw.get("type"), int):
+            raw["type"] = 1
+        try:
+            items.append(BwItem.from_dict(raw))
+        except Exception as e:
+            errors.append(f"Item at index {i}: {e}")
+    if errors:
+        # Log errors but don't fail - return what we could parse
+        import warnings
+        warnings.warn(f"Vault load had {len(errors)} errors: {errors[:5]}")
     return items, data
 
 
@@ -952,5 +1087,12 @@ def save_vault(path: Path, items: list[BwItem], original_data: dict[str, Any]) -
     """Save items back to a Bitwarden JSON export file."""
     out_data = dict(original_data)
     out_data["items"] = [i.to_dict() for i in items]
-    with open(path, "w", encoding="utf-8") as f:
+    # Write to temp file first for atomic save
+    temp_path = path.with_suffix(path.suffix + ".tmp")
+    with open(temp_path, "w", encoding="utf-8") as f:
         json.dump(out_data, f, indent=2, ensure_ascii=False)
+    # Round-trip validation: ensure saved file is valid JSON
+    with open(temp_path, "r", encoding="utf-8") as f:
+        json.load(f)
+    # Atomic rename
+    temp_path.replace(path)

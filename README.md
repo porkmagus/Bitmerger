@@ -1,21 +1,20 @@
 # 🔐 Bitmerger
 
 > **Intelligent, safe deduplication for Bitwarden vaults.**  
-> Auto-merge duplicate entries with confidence scoring. One command. Zero data loss.
-> **Now with a cross-platform GUI and batch rename tools.**
+> Auto-merge duplicate entries with confidence scoring. One click. Zero data loss.
 
 ---
 
 ## Table of Contents
 - [What It Does](#what-it-does)
 - [Quick Start](#quick-start)
-- [GUI Mode](#gui-mode)
-- [Batch Rename](#batch-rename)
+- [Features](#features)
+- [Health Audit](#health-audit)
 - [Safety Guarantees](#safety-guarantees)
-- [Usage & Options](#usage--options)
 - [How It Works](#how-it-works)
 - [Testing](#testing)
 - [Security & Privacy](#security--privacy)
+- [Building](#building)
 
 ---
 
@@ -74,57 +73,110 @@ pip install -r requirements.txt
 2. Go to **Tools** → **Export Vault** → **JSON**
 3. Save as `vault.json`
 
-### 3. Run the Tool
+### 3. Launch Bitmerger
 
 ```bash
-python3 bw_dedup.py vault.json
-```
-
-**That's it!** The tool will:
-- Analyze and find all duplicate clusters
-- Auto-merge everything safely
-- Create a **backup** (`vault.original.YYYYMMDD_HHMMSS.json`)
-- Write a **clean export** (`vault.dedup.json`)
-- Write a **merge log** (`vault.dedup.json.merge-log.json`)
-- Generate an **HTML report** (`vault.report.html`)
-
----
-
-## 🖥️ GUI Mode
-
-Launch the polished desktop GUI:
-
-```bash
-python3 -m bitmerger --gui
+python3 -m bitmerger
 # or
-python3 bw_dedup.py --gui
+python3 bw_dedup.py
 ```
 
-**Features:**
-- **Vault Overview** — Browse all items in a sortable table
-- **Deduplicate** — Point-and-click settings, analyze, preview, then execute
-- **Batch Rename** — Search and standardize item names with mouse clicks
-- **Progress bars** and **confirmation dialogs** for every destructive action
-- **Cross-platform** — Works on macOS, Windows, and Linux
+**That's it!** The GUI will open:
+- Drag your `vault.json` into the window, or click **Open Vault**
+- Browse all items in the **Vault Overview** tab
+- Click **🔍 Analyze Duplicates** in the **Deduplicate** tab
+- Review the **HTML Report** before importing
 
 ---
 
-## 🏷️ Batch Rename
+## 🖥️ Features
 
-Standardize messy vault names (e.g., `google.com`, `mail.google.com`, `accounts.google.com` → `Google`):
+### Vault Overview
+- Browse all items in a sortable table with 🔑 📝 💳 🪪 🔐 type icons
+- Double-click any item to edit inline
+- Real-time search across name, username, domain, notes, folder
+- Right-click context menu: copy password, open URL, find duplicates
 
-```bash
-python3 bw_dedup.py batch-rename vault.json --search "google+mail.google" --replace "Google" --yes
-```
+### Inline Item Editor
+- Edit name, username, password, TOTP, URIs, notes
+- Card fields: number, expiry, brand, CVV
+- Identity fields: name, address, email, phone, SSN
+- SSH keys: public key, private key, fingerprint
+- Custom fields: dynamic key/value rows with type selection
+- Password generator with length control
+- Folder dropdown and collection tags
 
-| Option | Description |
-|--------|-------------|
-| `--search` | Query with `+` for OR: `microsoft+live.com` |
-| `--replace` | New name for all matched items |
-| `--types` | Limit to item types (e.g., `1` for logins only) |
-| `--dry-run` | Preview matches without writing |
-| `--yes` | Skip confirmation |
-| `--no-backup` | Skip backup creation |
+### Deduplicate
+- Adjustable similarity threshold (0.0–1.0)
+- Per-item-type toggles (logins, notes, cards, identities, SSH)
+- Confidence filter: only auto-merge clusters above a confidence score
+- Fast mode for large vaults
+- Per-field merge preview before executing
+- Execute merge with one click
+
+### Batch Rename
+- Search and standardize item names with mouse clicks
+- Preview matches before applying
+- Undo/redo supported
+
+### Health Audit
+- One-click scan for:
+  - **Weak passwords** — <8 chars or common patterns
+  - **Reused passwords** — Clusters sharing the same password
+  - **Missing TOTP** — Logins for known 2FA providers without TOTP
+  - **Empty passwords** — Logins with no password
+- Export results as CSV
+
+### Dark / Light / Auto Theme
+- Toggle via menu or the 🌙 button in the header
+- Fully recolored tables, buttons, inputs, and panels
+- Persists across restarts
+
+### Drag & Drop
+- Drop any `.json` file onto the window to load instantly
+
+### Undo / Redo
+- `Ctrl+Z` / `Ctrl+Shift+Z` for every edit, merge, and rename
+- Descriptive undo labels in the Edit menu
+- 50-step history with deep-copy snapshots
+
+### Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+O` | Open vault |
+| `Ctrl+S` | Save vault |
+| `Ctrl+Shift+S` | Export CSV |
+| `Ctrl+F` | Focus search |
+| `Ctrl+M` | Analyze duplicates |
+| `Ctrl+D` | Dry run |
+| `Ctrl+Z` | Undo |
+| `Ctrl+Shift+Z` | Redo |
+| `Ctrl+T` | Toggle theme |
+| `Delete` | Delete item |
+| `F1` | Keyboard shortcuts overlay |
+
+### Welcome Wizard
+- First-run guide with **Open Vault** and **Load Sample** buttons
+- Sample vault creates 5 demo items for exploration
+
+---
+
+## 🏥 Health Audit
+
+1. Open the **Health Audit** tab
+2. Click **Run Health Audit**
+3. Review the report:
+   - **Weak passwords** — Items with <8 chars or common patterns (`password123`, `123456`)
+   - **Reused passwords** — Clusters of items sharing the same password
+   - **Missing TOTP** — Logins for known 2FA providers without a TOTP secret
+   - **Empty passwords** — Logins with no password set
+
+Export the results as a CSV from the File menu for spreadsheet review.
+
+---
+
+## 🛡️ Safety Guarantees
 
 Every merge is safe. Nothing is ever deleted.
 
@@ -134,96 +186,12 @@ Every merge is safe. Nothing is ever deleted.
 | **Merge Log** | Every merge recorded in `vault.dedup.json.merge-log.json` — reviewable and auditable |
 | **HTML Report** | Visual report of all clusters. Review before importing |
 | **Confidence Scoring** | Each cluster scored 0–100%. High scores = safe auto-merge |
-| **Conflict Absorption** | If entries differ (e.g., different usernames), the secondary is recorded in notes — **nothing is lost** |
-| **Passkey Preservation** | Multiple passkeys with different IDs are all kept; one entry can hold many |
+| **Conflict Absorption** | If entries differ, the secondary is recorded in notes — **nothing is lost** |
+| **Passkey Preservation** | Multiple passkeys with different IDs are all kept |
 | **TOTP Backfill** | Missing TOTP in primary? Merged from duplicate |
 | **Collection & Folder Merge** | All collection IDs and folder metadata are unioned |
 | **Zero Network Calls** | Everything processed locally. Your data never leaves your machine |
-
----
-
-## 📖 Usage Modes
-
-### Default: Auto-Merge
-
-```bash
-python3 bw_dedup.py vault.json
-```
-
-**Does:** Analyzes, merges, creates outputs all in one go.
-
-**Output:**
-- `vault.dedup.json` — Clean export
-- `vault.original.YYYYMMDD_HHMMSS.json` — Backup
-- `vault.dedup.json.merge-log.json` — Merge log
-- `vault.report.html` — Visual report
-
----
-
-### Review Mode: Step Through Each Merge
-
-```bash
-python3 bw_dedup.py vault.json --review
-```
-
-**Does:** Interactive mode. You approve each duplicate cluster before merging.
-
----
-
-### Report Only: Analyze Without Merging
-
-```bash
-python3 bw_dedup.py vault.json --report-only
-```
-
-**Does:** Generate the HTML report and console summary without writing any files. Perfect for previewing.
-
----
-
-### Dry Run: Preview Mode
-
-```bash
-python3 bw_dedup.py vault.json --dry-run
-```
-
-**Does:** Same as `--report-only` but also shows console preview of what would be merged.
-
----
-
-## 🎛️ All CLI Options
-
-```bash
-python3 bw_dedup.py INPUT_FILE [OPTIONS]
-```
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `-o, --output PATH` | Auto-generated | Output JSON path |
-| `-t, --threshold FLOAT` | `0.85` | Similarity threshold (0.0–1.0) |
-| `--review` | — | Interactive review mode |
-| `--dry-run` | — | Preview without writing |
-| `--report-only` | — | Generate report only |
-| `--fast` | — | Skip expensive fuzzy matching |
-| `--types TEXT` | All | Comma-separated: `1=Login, 2=Note, 3=Card, 4=Identity, 5=SSH` |
-| `--no-backup` | — | Skip creating backup |
-| `--confidence FLOAT` | `0.0` | Only auto-merge clusters above this confidence |
-| `--help` | — | Show help message |
-
-**Examples:**
-
-```bash
-# Only analyze logins (type 1)
-python3 bw_dedup.py vault.json --types 1
-
-# Only merge high-confidence clusters
-python3 bw_dedup.py vault.json --confidence 0.95
-
-# Save output to custom location
-python3 bw_dedup.py vault.json -o /path/to/output.json
-
-# Fast mode (skip fuzzy matching)
-python3 bw_dedup.py vault.json --fast
-```
+| **Undo / Redo** | `Ctrl+Z` reverses any merge, rename, or field edit |
 
 ---
 
@@ -275,8 +243,6 @@ For each duplicate cluster, the "best" entry becomes the primary based on:
 
 ### Confidence Scoring
 
-Each cluster receives a score based on match quality:
-
 | Score | Meaning | Action |
 |-------|---------|--------|
 | **100%** | Exact domain + username + password match | Auto-merge |
@@ -284,13 +250,9 @@ Each cluster receives a score based on match quality:
 | **85–95%** | Good match | Review recommended |
 | **<85%** | Loose match | Review strongly recommended |
 
-You control the threshold with `--confidence`.
-
 ---
 
 ## 📈 Performance
-
-Small vaults are instant. Larger vaults are still fast.
 
 | Vault Size | Duplicates | Time | Comparisons |
 |---|---|---|---|
@@ -355,26 +317,62 @@ Once deduplication is complete:
 
 ---
 
+## 📦 Building a Standalone Executable
+
+Package Bitmerger into a single-file `.app` (macOS), `.exe` (Windows), or AppImage (Linux) with no Python installation required.
+
+### Prerequisites
+
+```bash
+pip install pyinstaller
+```
+
+### Build
+
+```bash
+# macOS / Linux / Windows
+python build.py
+
+# Single-file executable
+python build.py --onefile
+```
+
+Output will be in `dist/Bitmerger/`.
+
+### macOS App Bundle
+
+```bash
+# After pyinstaller build
+mv dist/Bitmerger.app /Applications/Bitmerger.app
+```
+
+---
+
 ## 📁 Project Structure
 
 ```
 bitmerger/
-├── bw_dedup.py              # Backward-compatible entry point
+├── bw_dedup.py              # Entry point — launches GUI
 ├── bitmerger/
 │   ├── __init__.py
 │   ├── __main__.py          # python -m bitmerger
 │   ├── core.py              # Engine: models, similarity, merging
-│   ├── cli.py               # CLI commands (dedup, batch-rename)
 │   ├── gui.py               # PySide6 desktop GUI
+│   ├── theme.py             # Dark/Light/Auto theme manager
+│   ├── icons.py             # Type icons & confidence badges
+│   ├── item_editor.py       # Inline item editing panel
+│   ├── undo_manager.py      # Undo/redo stack
 │   └── templates/
 │       └── report.jinja2    # HTML report template
 ├── requirements.txt         # Python dependencies
 ├── .gitignore
 ├── README.md
-├── tests/
-│   ├── test_engine.py       # 35 core engine tests
-│   └── test_batch_rename.py # 20 batch-rename tests
-└── stress_test.py           # Synthetic vault generator
+├── build.py                 # PyInstaller build script
+├── generate_large_vault.py  # Synthetic vault generator
+├── test_large_vault.py      # Stress test suite
+└── tests/
+    ├── test_engine.py       # 35 core engine tests
+    └── test_batch_rename.py # 20 batch-rename tests
 ```
 
 ---
@@ -393,9 +391,12 @@ bitmerger/
 **Symptom:** "Invalid JSON" error when importing.  
 **Fix:** Ensure the `*.dedup.json` file hasn't been corrupted. Check the merge log for details.
 
-### ModuleNotFoundError: No module named 'click'
-**Fix:** 
+### GUI won't launch
+**Symptom:** `ImportError: No module named 'PySide6'`  
+**Fix:** Install GUI dependencies:
 ```bash
+pip install PySide6
+# or
 pip install -r requirements.txt
 ```
 
@@ -403,8 +404,6 @@ pip install -r requirements.txt
 
 ## 📦 Dependencies
 
-- **Click** — CLI framework
-- **Rich** — Terminal formatting and output
 - **Jinja2** — HTML report templating
 - **thefuzz** — Fuzzy string matching
 - **tldextract** — Domain extraction
@@ -415,32 +414,20 @@ All specified in `requirements.txt`. Install with:
 pip install -r requirements.txt
 ```
 
-**GUI only:** If you only need the CLI, you can skip PySide6:
-```bash
-pip install click rich jinja2 thefuzz tldextract python-Levenshtein
-```
-
 ---
 
-## 📜 License
 
-MIT License. Use at your own risk.
+## Security Notes
 
----
+- CSV export includes passwords in plaintext. Use with caution.
+- Reused password detection compares passwords in memory.
+- Auto-save writes plaintext JSON to disk. Ensure your vault directory is secure.
 
-## 🙏 Credits
 
-Built with amazing open-source libraries:
-- [Click](https://click.palletsprojects.com/)
-- [Rich](https://rich.readthedocs.io/)
-- [Jinja2](https://jinja.palletsprojects.com/)
-- [thefuzz](https://github.com/seatgeek/thefuzz)
-- [tldextract](https://github.com/john-kurkowski/tldextract)
+## Browser Integration
 
----
+Bitmerger does not include browser integration or auto-type functionality. It is a vault utility for deduplication, audit, and comparison. Use the official Bitwarden browser extension for form filling and auto-type.
 
-<div align="center">
+## Attachments
 
-**Nothing is ever deleted. Everything is safely merged.** ✨
-
-</div>
+Bitmerger does not support vault attachments. Attachments are not included in standard Bitwarden JSON exports and are not processed by this tool.

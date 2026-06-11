@@ -14,9 +14,8 @@ from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QLineEdit, QCheckBox, QDoubleSpinBox,
-    QFileDialog, QMessageBox, QProgressBar, QTabWidget, QComboBox,
-    QGroupBox, QTableWidget, QTableWidgetItem, QTextEdit,
-    QHeaderView,
+    QFileDialog, QMessageBox, QProgressBar, QGroupBox, QComboBox, QTableWidget,
+    QTableWidgetItem, QTextEdit, QHeaderView,
 )
 from PySide6.QtGui import QFont, QIcon
 
@@ -29,6 +28,10 @@ from .core import (
     parse_search_query, filter_items_by_name, create_rename_log,
     load_vault, save_vault,
     apply_batch_edit, create_batch_edit_log, BatchEditRecord,
+)
+from .fluidity import (
+    SmoothVisibility, FadeTabWidget, ButtonPulse, StatusPulse,
+    CheckboxPulse, HoverHighlight, animate_table_refresh,
 )
 
 # ---------------------------------------------------------------------------
@@ -93,51 +96,61 @@ class VaultTable(QTableWidget):
         self.setAlternatingRowColors(True)
         self.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.setSortingEnabled(True)
+        # Smooth per-pixel scrolling
+        self.setVerticalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
+        self.setHorizontalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
 
     def set_folder_map(self, folder_map: Dict[str, str]) -> None:
         self._folder_map = folder_map
 
     def set_items(self, items: list[BwItem]) -> None:
         self._current_items = items
-        # Disable sorting while repopulating to avoid sort-comparison issues
-        self.setSortingEnabled(False)
-        self.blockSignals(True)
-        self.setUpdatesEnabled(False)
 
-        self.clearContents()
-        self.setRowCount(0)
-        self.setRowCount(len(items))
-        type_names = {1: "Login", 2: "Note", 3: "Card", 4: "Identity", 5: "SSH"}
-        for row, item in enumerate(items):
-            tname = type_names.get(item.type, "Other")
-            username = ""
-            domain = ""
-            if item.login:
-                username = item.login.username or ""
-                if item.login.uris:
-                    domain = normalize_domain(item.login.uris[0].uri) or ""
-            fav = "Yes" if item.favorite else ""
-            rep = "Yes" if item.reprompt else ""
-            folder = self._folder_map.get(item.folderId or "", "") or (item.folderId or "")
-            notes = (item.notes or "")[:40]
+        def _populate() -> None:
+            self.setSortingEnabled(False)
+            self.blockSignals(True)
+            self.setUpdatesEnabled(False)
 
-            self.setItem(row, 0, QTableWidgetItem(tname))
-            self.setItem(row, 1, QTableWidgetItem(item.name))
-            self.setItem(row, 2, QTableWidgetItem(username))
-            self.setItem(row, 3, QTableWidgetItem(domain))
-            self.setItem(row, 4, QTableWidgetItem(fav))
-            self.setItem(row, 5, QTableWidgetItem(rep))
-            self.setItem(row, 6, QTableWidgetItem(folder))
-            self.setItem(row, 7, QTableWidgetItem(notes))
-            self.setItem(row, 8, QTableWidgetItem(item.id))
+            self.clearContents()
+            self.setRowCount(0)
+            self.setRowCount(len(items))
+            type_names = {1: "Login", 2: "Note", 3: "Card", 4: "Identity", 5: "SSH"}
+            for row, item in enumerate(items):
+                tname = type_names.get(item.type, "Other")
+                username = ""
+                domain = ""
+                if item.login:
+                    username = item.login.username or ""
+                    if item.login.uris:
+                        domain = normalize_domain(item.login.uris[0].uri) or ""
+                fav = "Yes" if item.favorite else ""
+                rep = "Yes" if item.reprompt else ""
+                folder = self._folder_map.get(item.folderId or "", "") or (item.folderId or "")
+                notes = (item.notes or "")[:40]
 
-        self.setUpdatesEnabled(True)
-        self.blockSignals(False)
-        self.setSortingEnabled(True)
-        self.viewport().update()
+                self.setItem(row, 0, QTableWidgetItem(tname))
+                self.setItem(row, 1, QTableWidgetItem(item.name))
+                self.setItem(row, 2, QTableWidgetItem(username))
+                self.setItem(row, 3, QTableWidgetItem(domain))
+                self.setItem(row, 4, QTableWidgetItem(fav))
+                self.setItem(row, 5, QTableWidgetItem(rep))
+                self.setItem(row, 6, QTableWidgetItem(folder))
+                self.setItem(row, 7, QTableWidgetItem(notes))
+                self.setItem(row, 8, QTableWidgetItem(item.id))
+
+            self.setUpdatesEnabled(True)
+            self.blockSignals(False)
+            self.setSortingEnabled(True)
+            self.viewport().update()
+
+        # Only animate for substantial tables; small tables populate instantly.
+        if len(items) > 10:
+            animate_table_refresh(self, _populate)
+        else:
+            _populate()
 
     def get_selected_items(self, all_items: list[BwItem]) -> list[BwItem]:
-        selected = []
+        selected: list[BwItem] = []
         for idx in self.selectionModel().selectedRows():
             row = idx.row()
             item_widget = self.item(row, 8)
@@ -175,7 +188,8 @@ class MainWindow(QMainWindow):
         self._batch_worker: Optional[BatchSearchWorker] = None
 
         self._build_ui()
-        
+        self._apply_fluidity()
+
 
     # --- UI construction ---
 
@@ -218,8 +232,8 @@ class MainWindow(QMainWindow):
         self._stats_label.setStyleSheet("font-size: 12px;")
         layout.addWidget(self._stats_label)
 
-        # Tabs
-        self._tabs = QTabWidget()
+        # Tabs — use FadeTabWidget for smooth transitions
+        self._tabs = FadeTabWidget()
         layout.addWidget(self._tabs, 1)
 
         self._tabs.addTab(self._build_overview_tab(), "Vault Overview")
@@ -235,6 +249,17 @@ class MainWindow(QMainWindow):
         self._progress.setRange(0, 0)
         self._progress.setVisible(False)
         layout.addWidget(self._progress)
+
+    def _apply_fluidity(self) -> None:
+        """Wire up fluidity helpers after UI is constructed."""
+        # Smooth progress bar fade in/out
+        self._progress_smooth = SmoothVisibility(self._progress)
+
+        # Status label flash on text change
+        StatusPulse(self._status)
+
+        # Button pulse on primary action buttons
+        ButtonPulse(self._btn_save)
 
     def _build_overview_tab(self) -> QWidget:
         w = QWidget()
@@ -342,6 +367,9 @@ class MainWindow(QMainWindow):
         self._dedup_table.setAlternatingRowColors(True)
         self._dedup_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._dedup_table.setSortingEnabled(True)
+        # Smooth per-pixel scrolling
+        self._dedup_table.setVerticalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
+        self._dedup_table.setHorizontalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
         results_layout.addWidget(self._dedup_table)
 
         self._dedup_detail = QTextEdit()
@@ -354,6 +382,17 @@ class MainWindow(QMainWindow):
         self._dedup_table.itemSelectionChanged.connect(self._on_dedup_selection_changed)
 
         layout.addWidget(results, 1)
+
+        # Apply fluidity to dedup tab widgets
+        ButtonPulse(btn_analyze)
+        ButtonPulse(self._btn_dedup_merge)
+        CheckboxPulse(self._conf_check)
+        CheckboxPulse(self._fast_check)
+        for cb in self._type_checks.values():
+            CheckboxPulse(cb)
+        HoverHighlight(settings)
+        HoverHighlight(results)
+
         return w
 
     def _build_batch_editor_tab(self) -> QWidget:
@@ -450,6 +489,16 @@ class MainWindow(QMainWindow):
         edit_layout.addWidget(self._batch_apply_btn)
 
         layout.addWidget(edit_group)
+
+        # Apply fluidity to batch editor tab widgets
+        ButtonPulse(btn_search)
+        ButtonPulse(self._batch_apply_btn)
+        for cb in self._batch_type_checks.values():
+            CheckboxPulse(cb)
+        HoverHighlight(search_group)
+        HoverHighlight(results)
+        HoverHighlight(edit_group)
+
         return w
 
     def _update_batch_field_combo(self, items: list[BwItem]) -> None:
@@ -460,7 +509,7 @@ class MainWindow(QMainWindow):
         has_notes = any(i.notes for i in items)
         has_folder = any(i.folderId for i in items)
 
-        fields = []
+        fields: list[str] = []
         if has_name:
             fields.append("Name")
         if has_username:
@@ -515,7 +564,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Warning", "Enter a search query.")
             return
 
-        self._progress.setVisible(True)
+        self._progress_smooth.show()
         self._status.setText("Searching…")
         self._batch_table.setRowCount(0)
         self._batch_status.setText("")
@@ -529,7 +578,7 @@ class MainWindow(QMainWindow):
         self._batch_worker.start()
 
     def _on_batch_finished(self, matches: list[BwItem], all_items: list[BwItem]) -> None:
-        self._progress.setVisible(False)
+        self._progress_smooth.hide()
         self._batch_table.set_items(matches)
         self._batch_status.setText(f"Found {len(matches)} matching item(s)")
         self._status.setText(f"Search complete: {len(matches)} matches")
@@ -537,7 +586,7 @@ class MainWindow(QMainWindow):
         self._on_batch_selection_changed()
 
     def _on_batch_error(self, msg: str) -> None:
-        self._progress.setVisible(False)
+        self._progress_smooth.hide()
         QMessageBox.critical(self, "Error", f"Search failed:\n{msg}")
 
     def _on_batch_clear(self) -> None:
@@ -638,7 +687,7 @@ class MainWindow(QMainWindow):
             self._vault_path = Path(path)
             self._items, self._raw_data = load_vault(self._vault_path)
             self._file_label.setText(str(self._vault_path))
-            
+
             # Build folder ID -> name map
             folders = self._raw_data.get("folders", [])
             self._folder_map = {
@@ -700,7 +749,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Warning", "Load a vault first.")
             return
 
-        self._progress.setVisible(True)
+        self._progress_smooth.show()
         self._status.setText("Analyzing duplicates…")
         self._clusters = []
         self._cluster_infos = []
@@ -719,7 +768,7 @@ class MainWindow(QMainWindow):
         self._dedup_worker.start()
 
     def _on_dedup_finished(self, clusters: list[list[BwItem]], total_comp: int, all_items: list[BwItem]) -> None:
-        self._progress.setVisible(False)
+        self._progress_smooth.hide()
         self._clusters = clusters
         self._status.setText(f"Found {len(clusters)} clusters ({total_comp:,} comparisons)")
 
@@ -731,49 +780,55 @@ class MainWindow(QMainWindow):
         self._populate_dedup_table(clusters)
 
     def _on_dedup_error(self, msg: str) -> None:
-        self._progress.setVisible(False)
+        self._progress_smooth.hide()
         QMessageBox.critical(self, "Error", f"Analysis failed:\n{msg}")
 
     def _populate_dedup_table(self, clusters: list[list[BwItem]]) -> None:
-        self._dedup_table.blockSignals(True)
-        self._dedup_table.setUpdatesEnabled(False)
-        header = self._dedup_table.horizontalHeader()
-        old_resize = header.sectionResizeMode(0)
-        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        def _populate() -> None:
+            self._dedup_table.blockSignals(True)
+            self._dedup_table.setUpdatesEnabled(False)
+            header = self._dedup_table.horizontalHeader()
+            old_resize = header.sectionResizeMode(0)
+            header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
 
-        self._dedup_table.clearContents()
-        self._dedup_table.setRowCount(0)
-        self._dedup_table.setRowCount(len(clusters))
-        type_names = {1: "Login", 2: "Note", 3: "Card", 4: "Identity", 5: "SSH"}
-        for idx, cluster in enumerate(clusters):
-            first = cluster[0]
-            tname = type_names.get(first.type, "Other")
-            names = "\n".join(c.name for c in cluster)
-            conf = cluster_confidence(cluster)
-            conf_str = f"{conf:.0%}"
+            self._dedup_table.clearContents()
+            self._dedup_table.setRowCount(0)
+            self._dedup_table.setRowCount(len(clusters))
+            type_names = {1: "Login", 2: "Note", 3: "Card", 4: "Identity", 5: "SSH"}
+            for idx, cluster in enumerate(clusters):
+                first = cluster[0]
+                tname = type_names.get(first.type, "Other")
+                names = "\n".join(c.name for c in cluster)
+                conf = cluster_confidence(cluster)
+                conf_str = f"{conf:.0%}"
 
-            key = ""
-            if first.is_login():
-                key = (first.login.username or "") if first.login else ""
-            elif first.is_card():
-                key = first.get_card_fingerprint() or ""
-            elif first.is_identity():
-                key = first.identity.get("email", "") if first.identity else ""
-            elif first.is_ssh_key():
-                key = (first.sshKey.keyFingerprint or "") if first.sshKey else ""
+                key = ""
+                if first.is_login():
+                    key = (first.login.username or "") if first.login else ""
+                elif first.is_card():
+                    key = first.get_card_fingerprint() or ""
+                elif first.is_identity():
+                    key = first.identity.get("email", "") if first.identity else ""
+                elif first.is_ssh_key():
+                    key = (first.sshKey.keyFingerprint or "") if first.sshKey else ""
 
-            self._dedup_table.setItem(idx, 0, QTableWidgetItem(str(idx + 1)))
-            self._dedup_table.setItem(idx, 1, QTableWidgetItem(tname))
-            self._dedup_table.setItem(idx, 2, QTableWidgetItem(str(len(cluster))))
-            self._dedup_table.setItem(idx, 3, QTableWidgetItem(names))
-            self._dedup_table.setItem(idx, 4, QTableWidgetItem(conf_str))
-            self._dedup_table.setItem(idx, 5, QTableWidgetItem(key))
+                self._dedup_table.setItem(idx, 0, QTableWidgetItem(str(idx + 1)))
+                self._dedup_table.setItem(idx, 1, QTableWidgetItem(tname))
+                self._dedup_table.setItem(idx, 2, QTableWidgetItem(str(len(cluster))))
+                self._dedup_table.setItem(idx, 3, QTableWidgetItem(names))
+                self._dedup_table.setItem(idx, 4, QTableWidgetItem(conf_str))
+                self._dedup_table.setItem(idx, 5, QTableWidgetItem(key))
 
-        header.setSectionResizeMode(old_resize)
-        self._dedup_table.setUpdatesEnabled(True)
-        self._dedup_table.blockSignals(False)
-        header.resizeSections(QHeaderView.ResizeMode.ResizeToContents)
-        self._dedup_table.viewport().update()
+            header.setSectionResizeMode(old_resize)
+            self._dedup_table.setUpdatesEnabled(True)
+            self._dedup_table.blockSignals(False)
+            header.resizeSections(QHeaderView.ResizeMode.ResizeToContents)
+            self._dedup_table.viewport().update()
+
+        if len(clusters) > 10:
+            animate_table_refresh(self._dedup_table, _populate)
+        else:
+            _populate()
 
     def _on_dedup_selection_changed(self) -> None:
         selected = self._dedup_table.selectedItems()

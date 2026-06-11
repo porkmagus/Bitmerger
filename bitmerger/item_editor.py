@@ -19,6 +19,7 @@ from PySide6.QtGui import QAction, QKeySequence
 from .core import BwItem, UriEntry, LoginData, SshKeyData, load_vault, save_vault
 from .theme import get_theme_manager
 from .icons import type_badge_text, type_color, type_color_q
+from .fluidity import ButtonPulse, CheckboxPulse, StatusPulse, HoverHighlight
 
 
 class SecureLineEdit(QLineEdit):
@@ -332,6 +333,14 @@ class ItemEditor(QScrollArea):
         actions.addWidget(self._discard_btn)
         actions.addStretch()
         layout.addLayout(actions)
+
+        # Wire fluidity helpers
+        ButtonPulse(self._save_btn)
+        CheckboxPulse(self._fav_check)
+        CheckboxPulse(self._reprompt_check)
+        StatusPulse(self._pw_strength)
+        StatusPulse(self._notes_count)
+        HoverHighlight(meta)
 
         layout.addStretch()
 

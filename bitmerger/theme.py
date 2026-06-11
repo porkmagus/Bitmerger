@@ -459,4 +459,6 @@ class ThemeManager(QObject):
 
 
 def get_theme_manager(app: Optional[QApplication] = None) -> ThemeManager:
-    return ThemeManager(app)
+    if ThemeManager._instance is None:
+        return ThemeManager(app)
+    return ThemeManager._instance

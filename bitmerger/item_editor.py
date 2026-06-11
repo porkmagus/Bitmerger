@@ -166,7 +166,8 @@ class ItemEditor(QScrollArea):
         btn_add_uri = QPushButton("+ Add URI")
         btn_add_uri.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_add_uri.setToolTip("Add a new URI for this login")
-        btn_add_uri.clicked.connect(self._add_uri_row)
+        btn_add_uri.clicked.connect(lambda: self._add_uri_row())
+        self._add_uri_btn = btn_add_uri
         uri_layout.addWidget(btn_add_uri)
         login_layout.addWidget(uri_group)
 
@@ -292,7 +293,8 @@ class ItemEditor(QScrollArea):
         btn_add_cf = QPushButton("+ Add Custom Field")
         btn_add_cf.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_add_cf.setToolTip("Add a new custom field")
-        btn_add_cf.clicked.connect(self._add_custom_field)
+        btn_add_cf.clicked.connect(lambda: self._add_custom_field())
+        self._add_cf_btn = btn_add_cf
         cf_layout.addWidget(btn_add_cf)
         cf_layout.addStretch()
         self._tabs.addTab(cf_tab, " Custom Fields")
@@ -533,6 +535,7 @@ class ItemEditor(QScrollArea):
         btn.clicked.connect(lambda: self._remove_uri_row(row))
         row.addWidget(btn)
         self._uri_list.addLayout(row)
+        self._mark_dirty()
 
     def _remove_uri_row(self, layout: QHBoxLayout) -> None:
         while layout.count():
@@ -567,6 +570,7 @@ class ItemEditor(QScrollArea):
         row.addWidget(btn)
         self._cf_grid.addLayout(row, self._cf_row, 0)
         self._cf_row += 1
+        self._mark_dirty()
 
     def _remove_cf_row(self, layout: QHBoxLayout) -> None:
         while layout.count():

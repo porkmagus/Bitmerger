@@ -675,6 +675,10 @@ class MainWindow(QMainWindow):
         )
         if not path:
             return
+        self._load_vault(Path(path))
+
+    def _load_vault(self, path: Path) -> None:
+        """Load a vault from a Path (bypasses file dialog for testing)."""
         try:
             # Stop any running background workers before swapping data
             if self._dedup_worker and self._dedup_worker.isRunning():

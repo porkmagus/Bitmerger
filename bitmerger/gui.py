@@ -123,7 +123,27 @@ class PreflightWorker(QThread):
         except Exception as exc:
             self.error.emit(str(exc))
 
-# ---------------------------------------------------------------------------
+def item_overview_fields(item: BwItem) -> tuple[str, str]:
+    """Compact type-aware fields without exposing passwords or private keys."""
+    if item.is_login() and item.login:
+        flags = []
+        if item.login.totp:
+            flags.append("TOTP")
+        if item.login.fido2Credentials:
+            flags.append(f"{len(item.login.fido2Credentials)} passkey(s)")
+        domain = normalize_domain(item.login.uris[0].uri) if item.login.uris else ""
+        return item.login.username or "", " · ".join([part for part in [domain, *flags] if part])
+    if item.card:
+        number = "".join(ch for ch in str(item.card.get("number") or "") if ch.isdigit())
+        ending = f"•••• {number[-4:]}" if len(number) >= 4 else "Card number unavailable"
+        expiry = "/".join(part for part in (str(item.card.get("expMonth") or ""), str(item.card.get("expYear") or "")) if part)
+        return ending, " · ".join(part for part in (str(item.card.get("brand") or ""), expiry) if part)
+    if item.identity:
+        return str(item.identity.get("email") or item.identity.get("phone") or ""), " ".join(part for part in (str(item.identity.get("firstName") or ""), str(item.identity.get("lastName") or "")) if part)
+    if item.sshKey:
+        return item.sshKey.keyFingerprint or "SSH key", "Public key available" if item.sshKey.publicKey else "Private key only"
+    return "", "Secure note" if item.type == 2 else "Other vault item"
+
 
 class VaultTable(QTableWidget):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
@@ -131,7 +151,7 @@ class VaultTable(QTableWidget):
         self._folder_map: Dict[str, str] = {}
         self._current_items: list[BwItem] = []
         self.setColumnCount(9)
-        self.setHorizontalHeaderLabels(["Type", "Name", "Username", "Domain", "Favorite", "Reprompt", "Folder", "Notes", "ID"])
+        self.setHorizontalHeaderLabels(["Type", "Name", "Primary", "Details", "Favorite", "Reprompt", "Folder", "Notes", "ID"])
         self.horizontalHeader().setStretchLastSection(True)
         self.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self.horizontalHeader().setHighlightSections(False)
@@ -161,12 +181,7 @@ class VaultTable(QTableWidget):
             type_names = {1: "Login", 2: "Note", 3: "Card", 4: "Identity", 5: "SSH"}
             for row, item in enumerate(items):
                 tname = type_names.get(item.type, "Other")
-                username = ""
-                domain = ""
-                if item.login:
-                    username = item.login.username or ""
-                    if item.login.uris:
-                        domain = normalize_domain(item.login.uris[0].uri) or ""
+                primary, detail = item_overview_fields(item)
                 fav = "Yes" if item.favorite else ""
                 rep = "Yes" if item.reprompt else ""
                 folder = self._folder_map.get(item.folderId or "", "") or (item.folderId or "")
@@ -174,8 +189,8 @@ class VaultTable(QTableWidget):
 
                 self.setItem(row, 0, QTableWidgetItem(tname))
                 self.setItem(row, 1, QTableWidgetItem(item.name))
-                self.setItem(row, 2, QTableWidgetItem(username))
-                self.setItem(row, 3, QTableWidgetItem(domain))
+                self.setItem(row, 2, QTableWidgetItem(primary))
+                self.setItem(row, 3, QTableWidgetItem(detail))
                 self.setItem(row, 4, QTableWidgetItem(fav))
                 self.setItem(row, 5, QTableWidgetItem(rep))
                 self.setItem(row, 6, QTableWidgetItem(folder))

@@ -12,7 +12,7 @@ import pytest
 from PySide6.QtCore import Qt, QItemSelectionModel
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from bitmerger.gui import MainWindow
+from bitmerger.gui import MainWindow, item_overview_fields
 from bitmerger.item_editor import ItemEditor
 from bitmerger.core import BwItem, load_vault
 from bitmerger.vault_formats import save_1password
@@ -162,7 +162,14 @@ class TestVaultTable:
         headers = [table.horizontalHeaderItem(i).text() for i in range(9)]
         assert "Type" in headers
         assert "Name" in headers
-        assert "Username" in headers
+        assert "Primary" in headers
+        assert "Details" in headers
+
+    def test_ssh_key_has_visible_overview_fields(self):
+        item = BwItem.from_dict({"id": "ssh-1", "name": "Deploy", "type": 5, "sshKey": {"keyFingerprint": "SHA256:test", "publicKey": "ssh-ed25519 AAA"}})
+        primary, detail = item_overview_fields(item)
+        assert primary == "SHA256:test"
+        assert detail == "Public key available"
 
     def test_selecting_row(self, qtbot, tmp_vault):
         window = MainWindow()

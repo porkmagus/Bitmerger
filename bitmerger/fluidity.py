@@ -176,8 +176,16 @@ def animate_table_refresh(
     fade is noticeable.  For tiny tables call *populate_fn* directly.
     """
     effect = _ensure_opacity_effect(table)
+    # Keep both animations alive for their full lifetime. Without these strong
+    # references PySide can garbage-collect the fade-in and leave table cells
+    # semi-transparent until another paint event (such as hover).
+    previous = getattr(table, "_bitmerger_refresh_animations", [])
+    for animation in previous:
+        _stop_if_running(animation)
+    effect.setOpacity(1.0)
+    table._bitmerger_refresh_animations = []  # type: ignore[attr-defined]
 
-    fade_out_anim = QPropertyAnimation(effect, b"opacity")
+    fade_out_anim = QPropertyAnimation(effect, b"opacity", table)
     fade_out_anim.setDuration(80)
     fade_out_anim.setStartValue(1.0)
     fade_out_anim.setEndValue(0.3)
@@ -185,13 +193,17 @@ def animate_table_refresh(
 
     def _on_fade_out_done() -> None:
         populate_fn()
-        fade_in_anim = QPropertyAnimation(effect, b"opacity")
+        fade_in_anim = QPropertyAnimation(effect, b"opacity", table)
+        table._bitmerger_refresh_animations.append(fade_in_anim)  # type: ignore[attr-defined]
         fade_in_anim.setDuration(150)
         fade_in_anim.setStartValue(0.3)
         fade_in_anim.setEndValue(1.0)
         fade_in_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        fade_in_anim.finished.connect(lambda: effect.setOpacity(1.0))
+        fade_in_anim.finished.connect(lambda: table._bitmerger_refresh_animations.clear())  # type: ignore[attr-defined]
         fade_in_anim.start()
 
+    table._bitmerger_refresh_animations.append(fade_out_anim)  # type: ignore[attr-defined]
     fade_out_anim.finished.connect(_on_fade_out_done)
     fade_out_anim.start()
 

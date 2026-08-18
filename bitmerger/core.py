@@ -229,11 +229,16 @@ class BwItem:
     def get_card_fingerprint(self) -> Optional[str]:
         if not self.card:
             return None
-        number = self.card.get("number", "")
+        number = "".join(ch for ch in str(self.card.get("number") or "") if ch.isdigit())
         last4 = number[-4:] if len(number) >= 4 else ""
-        brand = self.card.get("brand", "")
-        exp = f"{self.card.get('expMonth', '')}/{self.card.get('expYear', '')}"
-        return f"{brand}:{last4}:{exp}"
+        brand = str(self.card.get("brand") or "").strip().lower()
+        month = str(self.card.get("expMonth") or "").strip()
+        year = str(self.card.get("expYear") or "").strip()
+        # A blank or partially populated card must never become an "exact" match.
+        # Requiring card number + complete expiry makes automatic merge conservative.
+        if not last4 or not month or not year:
+            return None
+        return f"{brand}:{last4}:{month}/{year}"
 
     def get_identity_fingerprint(self) -> Optional[str]:
         if not self.identity or not isinstance(self.identity, dict):
@@ -493,29 +498,43 @@ def merge_items(target: BwItem, source: BwItem) -> Tuple[BwItem, Dict[str, Any]]
     ta = (target.notes or "").strip()
     sa = (source.notes or "").strip()
     if sa and sa != ta:
-        merged = (ta + "\n\n" + sa).strip() if ta else sa
-        # Cap notes length to prevent giant notes fields
-        max_notes = 10000
-        if len(merged) > max_notes:
-            merged = merged[:max_notes] + "\n\n[truncated]"
-        target.notes = merged
+        target.notes = (ta + "\n\n" + sa).strip() if ta else sa
         backfilled["notes"] = True
 
     if source.favorite and not target.favorite:
         target.favorite = True
         backfilled["favorite"] = True
 
+    def _unique_append(target_values: list[Any], source_values: list[Any]) -> int:
+        """Append only structurally new values while preserving source order."""
+        def key(value: Any) -> str:
+            try:
+                return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+            except (TypeError, ValueError):
+                return repr(value)
+        seen = {key(value) for value in target_values}
+        added = 0
+        for value in source_values:
+            value_key = key(value)
+            if value_key not in seen:
+                target_values.append(copy.deepcopy(value))
+                seen.add(value_key)
+                added += 1
+        return added
+
     if source.passwordHistory:
         if not target.passwordHistory:
             target.passwordHistory = []
-        target.passwordHistory.extend(source.passwordHistory)
-        backfilled["history"] = True
+        added_history = _unique_append(target.passwordHistory, source.passwordHistory)
+        if added_history:
+            backfilled["history"] = added_history
 
     if source.fields:
         if not target.fields:
             target.fields = []
-        target.fields.extend(source.fields)
-        backfilled["fields"] = len(source.fields)
+        added_fields = _unique_append(target.fields, source.fields)
+        if added_fields:
+            backfilled["fields"] = added_fields
 
     # Collections: union
     if source.collectionIds:
@@ -541,14 +560,17 @@ def merge_items(target: BwItem, source: BwItem) -> Tuple[BwItem, Dict[str, Any]]
         if t_login is None or s_login is None:
             return target, backfilled
 
-        seen_uris = {clean_uri(u.uri).lower() for u in t_login.uris}
+        # Query strings and match modes can carry tenant/autofill semantics, so
+        # only identical raw URI + match pairs are duplicates.
+        seen_uris = {(u.uri.strip(), u.match) for u in t_login.uris if u.uri}
         new_uris: list[str] = []
         for u in s_login.uris:
-            cu = clean_uri(u.uri).lower()
-            if cu and cu not in seen_uris:
-                t_login.uris.append(UriEntry(match=u.match, uri=clean_uri(u.uri)))
-                seen_uris.add(cu)
-                new_uris.append(clean_uri(u.uri))
+            raw_uri = u.uri.strip()
+            uri_key = (raw_uri, u.match)
+            if raw_uri and uri_key not in seen_uris:
+                t_login.uris.append(UriEntry(match=u.match, uri=raw_uri))
+                seen_uris.add(uri_key)
+                new_uris.append(raw_uri)
         if new_uris:
             backfilled["uris"] = len(new_uris)
 
@@ -813,7 +835,7 @@ def create_backup(original_path: Path) -> Path:
     backup_dir = original_path.parent
     if not backup_dir.exists():
         backup_dir.mkdir(parents=True, exist_ok=True)
-    backup = backup_dir / f"{original_path.stem}.original.{ts}.json"
+    backup = original_path.with_name(f"{original_path.stem}.original.{ts}{original_path.suffix}")
     shutil.copy2(original_path, backup)
     return backup
 
@@ -841,7 +863,7 @@ def create_merge_log(records: List[MergeRecord], output_path: Path) -> Path:
 def _accumulate_backfill(all_bf: Dict[str, Any], bf: Dict[str, Any]) -> None:
     """Accumulate numeric backfill counters (conflicts, fields, etc.) instead of overwriting."""
     for k, v in bf.items():
-        if k in ("conflicts", "fields", "collectionIds", "passkeys"):
+        if k in ("conflicts", "fields", "collectionIds", "passkeys", "history"):
             all_bf[k] = all_bf.get(k, 0) + v
         else:
             all_bf[k] = v
@@ -862,23 +884,16 @@ def build_proposed_records(cluster_infos: List[ClusterInfo]) -> List[MergeRecord
         for i, c in enumerate(ci.items):
             if i == ci.selected_primary:
                 continue
+            before_uris = {(uri.uri.strip(), uri.match) for uri in primary.login.uris if uri.uri} if primary.login else set()
             primary, backfilled = merge_items(primary, c)
+            if backfilled.get("uris") and primary.login:
+                for uri in primary.login.uris:
+                    if uri.uri and (uri.uri.strip(), uri.match) not in before_uris:
+                        all_new_uris.append(uri.uri)
             for k, v in backfilled.items():
-                if k == "uris":
-                    if c.login:
-                        for u in c.login.uris:
-                            cu = clean_uri(u.uri)
-                            if cu:
-                                all_new_uris.append(cu)
-                else:
+                if k != "uris":
                     _accumulate_backfill(all_backfilled, {k: v})
-        seen: set[str] = {clean_uri(u.uri).lower() for u in primary.login.uris} if primary.login else set()
-        unique_new: list[str] = []
-        for u_str in all_new_uris:
-            cu_cleaned: str = clean_uri(u_str).lower()
-            if cu_cleaned not in seen:
-                unique_new.append(u_str)
-                seen.add(cu_cleaned)
+        unique_new = list(dict.fromkeys(all_new_uris))
         records.append(MergeRecord(
             cluster_id=ci.cluster_id + 1,
             primary=primary,

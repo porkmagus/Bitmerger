@@ -27,6 +27,7 @@ from .core import (
     load_vault, save_vault,
     apply_batch_edit, create_batch_edit_log,
 )
+from .vault_formats import VaultFormatError, merge_vaults
 
 console = Console()
 
@@ -211,7 +212,7 @@ def dedup(
         console.print(f"  Would merge: {report_stats['merged']} clusters")
         console.print(f"  Total time: {time.time() - t0:.2f}s")
         if dry_run:
-            console.print("\n[yellow]Dry run — no files written[/]")
+            console.print("\n[yellow]Dry run — merge/export skipped; writing report only.[/]")
         else:
             console.print("\n[yellow]Report only — no output or backup written[/]")
         generate_html_report(
@@ -236,22 +237,19 @@ def dedup(
 
         for i, c in enumerate(ci.items):
             if i != ci.selected_primary:
+                before_uris = {(uri.uri.strip(), uri.match) for uri in primary.login.uris if uri.uri} if primary.login else set()
                 primary, backfilled = merge_items(primary, c)
                 merged_away_ids.add(c.id)
+                if backfilled.get("uris") and primary.login:
+                    all_new_uris.extend(
+                        uri.uri for uri in primary.login.uris
+                        if uri.uri and (uri.uri.strip(), uri.match) not in before_uris
+                    )
                 for k, v in backfilled.items():
-                    if k == "uris":
-                        if c.login:
-                            all_new_uris.extend([clean_uri(u.uri) for u in c.login.uris])
-                    else:
+                    if k != "uris":
                         _accumulate_backfill(all_backfilled, {k: v})
 
-        seen: set[str] = {clean_uri(u.uri).lower() for u in primary.login.uris} if primary.login else set()
-        unique_new: list[str] = []
-        for u_str in all_new_uris:
-            cu_cleaned: str = clean_uri(u_str).lower()
-            if cu_cleaned not in seen:
-                unique_new.append(u_str)
-                seen.add(cu_cleaned)
+        unique_new = list(dict.fromkeys(all_new_uris))
 
         merge_records.append(
             MergeRecord(
@@ -265,9 +263,6 @@ def dedup(
 
     kept: list[BwItem] = [i for i in dedup_items if i.id not in merged_away_ids]
     final_items: list[BwItem] = kept + pass_through
-
-    out_data = dict(data)
-    out_data["items"] = [i.to_dict() for i in final_items]
 
     final_stats: Dict[str, int] = {
         "original": len(all_items),
@@ -286,8 +281,7 @@ def dedup(
         backup = create_backup(input_path)
         console.print(f"\n[dim]Backup created: {backup}")
 
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(out_data, f, indent=2, ensure_ascii=False)
+    save_vault(output_path, final_items, data)
     console.print(f"\n[bold green]Wrote clean export to[/] {output_path}")
 
     if merge_records:
@@ -315,6 +309,34 @@ def dedup(
         title="🔐 Bitmerger Complete",
         border_style="green"
     ))
+
+
+@cli.command(name="merge-vaults")
+@click.argument("bitwarden_file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.argument("onepassword_file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("-o", "--output-dir", type=click.Path(file_okay=False, path_type=Path), required=True, help="Folder for the cleaned Bitwarden JSON, 1Password 1PUX, and audit report.")
+@click.option("-t", "--threshold", type=click.FloatRange(0.90, 1.0), default=0.95, show_default=True, help="Strict confidence required before records are combined.")
+@click.option("--onepassword-csv", type=click.Path(exists=True, dir_okay=False, path_type=Path), default=None, help="Optional 1Password CSV to enrich matching logins with OTPAuth TOTP data.")
+def merge_vaults_command(bitwarden_file: Path, onepassword_file: Path, output_dir: Path, threshold: float, onepassword_csv: Optional[Path]) -> None:
+    """Safely merge a Bitwarden JSON export and a 1Password 1PUX export.
+
+    The originals are never modified.  This writes a Bitwarden JSON import file,
+    a standards-shaped 1Password 1PUX archive, and an audit report.
+    """
+    try:
+        result = merge_vaults(bitwarden_file, onepassword_file, output_dir, threshold, onepassword_csv_path=onepassword_csv)
+    except (VaultFormatError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    console.print(f"[bold green]Created both cleaned vaults from {result.input_count} input item(s).[/]")
+    console.print(f"  Safe duplicates merged: {result.merged_count}")
+    console.print(f"  Final item count: {result.output_count}")
+    console.print(f"  Bitwarden JSON: {result.bitwarden_output}")
+    console.print(f"  1Password 1PUX: {result.onepassword_output}")
+    console.print(f"  Audit report: {result.report_output}")
+    if result.warnings:
+        console.print("[yellow]Format notes:[/]")
+        for warning in result.warnings:
+            console.print(f"  • {warning}")
 
 
 @cli.command(name="batch-edit")
@@ -402,11 +424,13 @@ def batch_edit(
         return
 
     records = apply_batch_edit(all_items, matches, field, parsed_value)
-    save_vault(output_path, all_items, data)
 
+    # If output aliases the source, snapshot the source bytes before replacing it.
     if not no_backup:
         backup = create_backup(input_path)
         console.print(f"[dim]Backup created: {backup}")
+
+    save_vault(output_path, all_items, data)
 
     console.print(f"[bold green]Wrote edited export to[/] {output_path}")
 
@@ -466,6 +490,11 @@ def batch_rename(
 
 
 def main() -> None:
-    if len(sys.argv) > 1 and sys.argv[1] not in ("dedup", "batch-rename", "--help", "-h"):
+    commands = ("dedup", "batch-rename", "batch-edit", "merge-vaults", "--help", "-h")
+    if len(sys.argv) > 1 and sys.argv[1] not in commands:
         sys.argv.insert(1, "dedup")
     cli()
+
+
+if __name__ == "__main__":
+    main()

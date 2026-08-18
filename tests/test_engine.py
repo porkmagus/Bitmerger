@@ -14,10 +14,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from bitmerger.core import (
     BwItem, LoginData, UriEntry, SshKeyData,
     normalize_text, normalize_domain, clean_uri,
-    fuzzy_name_similarity, login_similarity, item_similarity,
+    fuzzy_name_similarity, login_similarity, card_similarity, item_similarity,
     cluster_confidence, pick_primary, merge_items,
     find_duplicates_by_type, create_backup, create_merge_log,
-    generate_html_report, MergeRecord,
+    generate_html_report, MergeRecord, ClusterInfo, build_proposed_records,
 )
 
 
@@ -189,11 +189,44 @@ class TestMergeItems(unittest.TestCase):
         self.assertIn("Note B", merged.notes or "")
         self.assertIn("notes", _backfilled)
 
+    def test_notes_do_not_truncate_merged_data(self):
+        target = BwItem(id="t", type=1, name="GitHub", notes="A" * 9990, login=LoginData())
+        source = BwItem(id="s", type=1, name="GitHub", notes="B" * 100, login=LoginData())
+        merged, _ = merge_items(target, source)
+        self.assertEqual(merged.notes, "A" * 9990 + "\n\n" + "B" * 100)
+
     def test_notes_no_duplicate(self):
         target = BwItem(id="t", type=1, name="GitHub", notes="Same note", login=LoginData())
         source = BwItem(id="s", type=1, name="GitHub", notes="Same note", login=LoginData())
         merged, _backfilled = merge_items(target, source)
         self.assertEqual(merged.notes, "Same note")
+
+    def test_uri_query_and_match_rules_are_preserved(self):
+        target = BwItem(id="t", type=1, name="Example", login=LoginData(uris=[UriEntry(uri="https://example.com/login?tenant=A", match=0)]))
+        source = BwItem(id="s", type=1, name="Example", login=LoginData(uris=[UriEntry(uri="https://example.com/login?tenant=B", match=1)]))
+        merged, _ = merge_items(target, source)
+        assert merged.login is not None
+        self.assertEqual([(uri.uri, uri.match) for uri in merged.login.uris], [("https://example.com/login?tenant=A", 0), ("https://example.com/login?tenant=B", 1)])
+
+    def test_custom_field_deduplication(self):
+        target = BwItem(id="t", type=1, name="GitHub", fields=[{"name": "backup", "value": "abc", "type": 1}], login=LoginData())
+        source = BwItem(id="s", type=1, name="GitHub", fields=[{"name": "backup", "value": "abc", "type": 1}, {"name": "region", "value": "us", "type": 0}], login=LoginData())
+        merged, backfilled = merge_items(target, source)
+        self.assertEqual(len(merged.fields or []), 2)
+        self.assertEqual(backfilled.get("fields"), 1)
+
+    def test_password_history_deduplication(self):
+        target = BwItem(id="t", type=1, name="GitHub", passwordHistory=[{"password": "old", "lastUsedDate": "2024-01-01"}], login=LoginData())
+        source = BwItem(id="s", type=1, name="GitHub", passwordHistory=[{"password": "old", "lastUsedDate": "2024-01-01"}, {"password": "older", "lastUsedDate": "2023-01-01"}], login=LoginData())
+        merged, backfilled = merge_items(target, source)
+        self.assertEqual(len(merged.passwordHistory or []), 2)
+        self.assertEqual(backfilled.get("history"), 1)
+
+    def test_incomplete_cards_are_not_exact_duplicates(self):
+        first = BwItem(id="a", type=3, name="Everyday Visa", card={"brand": ""})
+        second = BwItem(id="b", type=3, name="Travel Visa", card={"brand": ""})
+        self.assertEqual(first.get_card_fingerprint(), None)
+        self.assertLess(card_similarity(first, second), 0.95)
 
     def test_card_merge(self):
         target = BwItem(id="t", type=3, name="Visa", card={"brand": "Visa", "number": "1234"})
@@ -264,6 +297,12 @@ class TestFindDuplicates(unittest.TestCase):
         items: list[BwItem] = [a, b]
         clusters, _ = find_duplicates_by_type(items, threshold=0.85)
         self.assertEqual(len(clusters), 0)
+
+    def test_proposed_records_report_added_uris(self):
+        primary = BwItem(id="p", type=1, name="Example", login=LoginData(username="user", password="password", uris=[UriEntry(uri="https://example.com/a")]))
+        secondary = BwItem(id="s", type=1, name="Example", login=LoginData(username="user", password="password", uris=[UriEntry(uri="https://example.com/b")]))
+        record = build_proposed_records([ClusterInfo(cluster_id=0, items=[primary, secondary], selected_primary=0, confidence=1.0)])[0]
+        self.assertEqual(record.new_uris, ["https://example.com/b"])
 
     def test_no_monster_cluster(self):
         """Same username+password across many different domains must NOT collapse into one cluster."""

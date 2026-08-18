@@ -26,12 +26,15 @@ from .core import (
     merge_items, build_proposed_records, _accumulate_backfill,
     create_backup, create_merge_log, generate_html_report,
     parse_search_query, filter_items_by_name, create_rename_log,
-    load_vault, save_vault,
     apply_batch_edit, create_batch_edit_log, BatchEditRecord,
 )
 from .fluidity import (
     SmoothVisibility, FadeTabWidget, ButtonPulse, StatusPulse,
     CheckboxPulse, HoverHighlight, animate_table_refresh,
+)
+from .vault_formats import (
+    DualMergeResult, VaultFormatError, expected_merge_outputs, load_document, merge_vaults,
+    save_bitwarden, save_1password,
 )
 
 # ---------------------------------------------------------------------------
@@ -75,6 +78,28 @@ class BatchSearchWorker(QThread):
             self.finished.emit(matches, self.items)
         except Exception as e:
             self.error.emit(str(e))
+
+
+class DualVaultMergeWorker(QThread):
+    """Runs cross-vault processing without freezing the desktop UI."""
+
+    finished = Signal(object)
+    error = Signal(str)
+
+    def __init__(self, bitwarden_path: Path, onepassword_path: Path, output_dir: Path, threshold: float, onepassword_csv_path: Optional[Path] = None, overwrite: bool = False) -> None:
+        super().__init__()
+        self.bitwarden_path = bitwarden_path
+        self.onepassword_path = onepassword_path
+        self.output_dir = output_dir
+        self.threshold = threshold
+        self.onepassword_csv_path = onepassword_csv_path
+        self.overwrite = overwrite
+
+    def run(self) -> None:
+        try:
+            self.finished.emit(merge_vaults(self.bitwarden_path, self.onepassword_path, self.output_dir, self.threshold, onepassword_csv_path=self.onepassword_csv_path, overwrite=self.overwrite))
+        except Exception as exc:
+            self.error.emit(str(exc))
 
 
 # ---------------------------------------------------------------------------
@@ -174,11 +199,12 @@ class VaultTable(QTableWidget):
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Bitmerger — Bitwarden Vault Utility")
+        self.setWindowTitle("Bitmerger — Bitwarden + 1Password Vault Utility")
         self.setWindowIcon(QIcon())  # Placeholder for custom icon
         self.setMinimumSize(1000, 700)
 
         self._vault_path: Optional[Path] = None
+        self._vault_format = "bitwarden"
         self._items: list[BwItem] = []
         self._raw_data: dict[str, Any] = {}
         self._folder_map: Dict[str, str] = {}
@@ -186,6 +212,7 @@ class MainWindow(QMainWindow):
         self._cluster_infos: list[ClusterInfo] = []
         self._dedup_worker: Optional[DedupWorker] = None
         self._batch_worker: Optional[BatchSearchWorker] = None
+        self._dual_merge_worker: Optional[DualVaultMergeWorker] = None
 
         self._build_ui()
         self._apply_fluidity()
@@ -201,7 +228,7 @@ class MainWindow(QMainWindow):
         layout.setSpacing(10)
 
         # Header
-        header = QLabel("Bitmerger — Bitwarden Vault Utility")
+        header = QLabel("Bitmerger — Bitwarden + 1Password Vault Utility")
         header_font = QFont()
         header_font.setPointSize(18)
         header_font.setBold(True)
@@ -239,6 +266,7 @@ class MainWindow(QMainWindow):
         self._tabs.addTab(self._build_overview_tab(), "Vault Overview")
         self._tabs.addTab(self._build_dedup_tab(), "Deduplicate")
         self._tabs.addTab(self._build_batch_editor_tab(), "Batch Editor")
+        self._tabs.addTab(self._build_dual_vault_tab(), "Merge Vaults")
 
         # Status bar
         self._status = QLabel("Ready")
@@ -648,8 +676,8 @@ class MainWindow(QMainWindow):
 
             if self._vault_path:
                 backup = create_backup(self._vault_path)
-                out_path = self._vault_path.with_suffix(".edited.json")
-                save_vault(out_path, self._items, self._raw_data)
+                out_path = self._derived_output_path("edited")
+                self._save_current_format(out_path)
                 if records:
                     create_batch_edit_log(records, out_path)
                 QMessageBox.information(
@@ -671,7 +699,8 @@ class MainWindow(QMainWindow):
 
     def _on_load_vault(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "Open Bitwarden Vault Export", "", "JSON Files (*.json);;All Files (*)"
+            self, "Open Bitwarden JSON, 1Password 1PUX, or 1Password CSV Export", "",
+            "Vault exports (*.json *.1pux *.csv);;Bitwarden JSON (*.json);;1Password 1PUX (*.1pux);;1Password CSV (*.csv);;All Files (*)",
         )
         if not path:
             return
@@ -689,7 +718,10 @@ class MainWindow(QMainWindow):
                 self._batch_worker.wait(2000)
 
             self._vault_path = Path(path)
-            self._items, self._raw_data = load_vault(self._vault_path)
+            document = load_document(self._vault_path)
+            self._items = document.items
+            self._raw_data = document.raw_data
+            self._vault_format = document.format
             self._file_label.setText(str(self._vault_path))
 
             # Build folder ID -> name map
@@ -722,17 +754,32 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load vault:\n{e}")
 
+    def _save_current_format(self, path: Path) -> Path:
+        """Persist the active format; a single-vault workflow never silently converts it."""
+        if self._vault_format in {"1password", "1password_csv"}:
+            return save_1password(path, self._items)
+        return save_bitwarden(path, self._items, self._raw_data)
+
+    def _derived_output_path(self, label: str) -> Path:
+        if not self._vault_path:
+            raise ValueError("No vault path is available")
+        suffix = ".1pux" if self._vault_format in {"1password", "1password_csv"} else ".json"
+        return self._vault_path.with_name(f"{self._vault_path.stem}.{label}{suffix}")
+
     def _on_save_vault(self) -> None:
         if not self._items:
             QMessageBox.warning(self, "Warning", "No vault loaded to save.")
             return
+        is_onepassword = self._vault_format in {"1password", "1password_csv"}
+        extension = ".1pux" if is_onepassword else ".json"
+        format_label = "1Password 1PUX (*.1pux)" if is_onepassword else "Bitwarden JSON (*.json)"
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save Vault Export", "vault_clean.json", "JSON Files (*.json);;All Files (*)"
+            self, "Save Vault Export", f"vault_clean{extension}", f"{format_label};;All Files (*)"
         )
         if not path:
             return
         try:
-            save_vault(Path(path), self._items, self._raw_data)
+            self._save_current_format(Path(path))
             self._status.setText(f"Saved to {Path(path).name}")
             QMessageBox.information(self, "Saved", f"Vault saved to:\n{path}")
         except Exception as e:
@@ -902,22 +949,19 @@ class MainWindow(QMainWindow):
 
                 for i, c in enumerate(ci.items):
                     if i != ci.selected_primary:
+                        before_uris = {(uri.uri.strip(), uri.match) for uri in primary.login.uris if uri.uri} if primary.login else set()
                         primary, backfilled = merge_items(primary, c)
                         merged_away_ids.add(c.id)
+                        if backfilled.get("uris") and primary.login:
+                            all_new_uris.extend(
+                                uri.uri for uri in primary.login.uris
+                                if uri.uri and (uri.uri.strip(), uri.match) not in before_uris
+                            )
                         for k, v in backfilled.items():
-                            if k == "uris":
-                                if c.login:
-                                    all_new_uris.extend([clean_uri(u.uri) for u in c.login.uris])
-                            else:
+                            if k != "uris":
                                 _accumulate_backfill(all_backfilled, {k: v})
 
-                seen: set[str] = {clean_uri(u.uri).lower() for u in primary.login.uris} if primary.login else set()
-                unique_new: list[str] = []
-                for u_str in all_new_uris:
-                    cu_cleaned = clean_uri(u_str).lower()
-                    if cu_cleaned not in seen:
-                        unique_new.append(u_str)
-                        seen.add(cu_cleaned)
+                unique_new = list(dict.fromkeys(all_new_uris))
 
                 merge_records.append(MergeRecord(
                     cluster_id=ci.cluster_id + 1,
@@ -938,8 +982,8 @@ class MainWindow(QMainWindow):
             # Save immediately
             if self._vault_path:
                 backup = create_backup(self._vault_path)
-                out_path = self._vault_path.with_suffix(".dedup.json")
-                save_vault(out_path, self._items, self._raw_data)
+                out_path = self._derived_output_path("dedup")
+                self._save_current_format(out_path)
                 if merge_records:
                     create_merge_log(merge_records, out_path)
                 generate_html_report(
@@ -1027,6 +1071,206 @@ class MainWindow(QMainWindow):
                 )
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Dry run failed:\n{e}")
+
+    # --- Cross-format Merge Vaults ---
+
+    def _build_dual_vault_tab(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setSpacing(12)
+
+        intro = QLabel(
+            "Select one decrypted Bitwarden JSON export and one 1Password 1PUX export. "
+            "Bitmerger creates new, local-only output files for both applications; it never modifies either source file."
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+        plaintext_note = QLabel(
+            "Security note: exports and generated files contain plaintext secrets. Choose a private local folder; Bitmerger restricts new output files to the current user where supported."
+        )
+        plaintext_note.setWordWrap(True)
+        plaintext_note.setToolTip("Bitwarden JSON and 1Password 1PUX exports are unencrypted.")
+        layout.addWidget(plaintext_note)
+
+        sources = QGroupBox("Source vaults")
+        sources_layout = QVBoxLayout(sources)
+        self._dual_controls: list[QWidget] = []
+        self._dual_browse_buttons: list[QPushButton] = []
+        self._dual_bw_path = QLineEdit()
+        self._dual_bw_path.setReadOnly(True)
+        self._dual_bw_path.setPlaceholderText("Choose a Bitwarden JSON export…")
+        self._dual_1p_path = QLineEdit()
+        self._dual_1p_path.setReadOnly(True)
+        self._dual_1p_path.setPlaceholderText("Choose a 1Password .1pux export…")
+        self._dual_csv_path = QLineEdit()
+        self._dual_csv_path.setReadOnly(True)
+        self._dual_csv_path.setPlaceholderText("Optional: choose a 1Password CSV to enrich logins and TOTP…")
+        for label, target, callback in (
+            ("Bitwarden JSON", self._dual_bw_path, self._choose_dual_bitwarden),
+            ("1Password 1PUX", self._dual_1p_path, self._choose_dual_onepassword),
+            ("1Password CSV (optional)", self._dual_csv_path, self._choose_dual_csv),
+        ):
+            row = QHBoxLayout()
+            row.addWidget(QLabel(label))
+            target.setAccessibleName(label)
+            target.setAccessibleDescription(f"Selected {label} source file")
+            row.addWidget(target, 1)
+            button = QPushButton("Choose…")
+            button.setAccessibleName(f"Choose {label}")
+            button.clicked.connect(callback)
+            self._dual_browse_buttons.append(button)
+            row.addWidget(button)
+            sources_layout.addLayout(row)
+        layout.addWidget(sources)
+
+        output = QGroupBox("Safe merge settings")
+        output_layout = QVBoxLayout(output)
+        output_row = QHBoxLayout()
+        self._dual_output_dir = QLineEdit()
+        self._dual_output_dir.setReadOnly(True)
+        self._dual_output_dir.setAccessibleName("Output folder")
+        self._dual_output_dir.setAccessibleDescription("Folder where the cleaned vaults and audit report are written")
+        self._dual_output_dir.setPlaceholderText("Choose a folder for the two new vault files…")
+        output_row.addWidget(QLabel("Output folder"))
+        output_row.addWidget(self._dual_output_dir, 1)
+        choose_output = QPushButton("Choose…")
+        choose_output.setAccessibleName("Choose output folder")
+        choose_output.clicked.connect(self._choose_dual_output_dir)
+        self._dual_browse_buttons.append(choose_output)
+        output_row.addWidget(choose_output)
+        output_layout.addLayout(output_row)
+        strict_row = QHBoxLayout()
+        strict_row.addWidget(QLabel("Strict duplicate confidence"))
+        self._dual_threshold = QDoubleSpinBox()
+        self._dual_threshold.setAccessibleName("Strict duplicate confidence")
+        self._dual_threshold.setRange(0.90, 1.00)
+        self._dual_threshold.setSingleStep(0.01)
+        self._dual_threshold.setDecimals(2)
+        self._dual_threshold.setValue(0.95)
+        self._dual_threshold.setToolTip("Only records at or above this confidence are combined. Higher is safer.")
+        self._dual_controls.append(self._dual_threshold)
+        strict_row.addWidget(self._dual_threshold)
+        strict_row.addStretch()
+        output_layout.addLayout(strict_row)
+        layout.addWidget(output)
+
+        self._dual_merge_button = QPushButton("Merge and Create Both Vaults")
+        self._dual_merge_button.setAccessibleName("Merge selected vaults")
+        self._dual_merge_button.setToolTip("Writes a Bitwarden JSON import file, a 1Password 1PUX archive, and an audit report.")
+        self._dual_merge_button.clicked.connect(self._on_dual_merge)
+        layout.addWidget(self._dual_merge_button)
+
+        self._dual_result = QTextEdit()
+        self._dual_result.setReadOnly(True)
+        self._dual_result.setPlaceholderText("Output paths and any format-preservation warnings will appear here.")
+        layout.addWidget(self._dual_result, 1)
+        return widget
+
+    def _choose_dual_bitwarden(self) -> None:
+        filename, _ = QFileDialog.getOpenFileName(self, "Choose Bitwarden JSON Export", "", "Bitwarden JSON (*.json)")
+        if filename:
+            self._dual_bw_path.setText(filename)
+            if not self._dual_output_dir.text():
+                self._dual_output_dir.setText(str(Path(filename).parent / "bitmerger-output"))
+
+    def _choose_dual_onepassword(self) -> None:
+        filename, _ = QFileDialog.getOpenFileName(self, "Choose 1Password 1PUX Export", "", "1Password Unencrypted Export (*.1pux)")
+        if filename:
+            self._dual_1p_path.setText(filename)
+            if not self._dual_output_dir.text():
+                self._dual_output_dir.setText(str(Path(filename).parent / "bitmerger-output"))
+
+    def _choose_dual_csv(self) -> None:
+        filename, _ = QFileDialog.getOpenFileName(self, "Choose Optional 1Password CSV Export", "", "1Password CSV (*.csv)")
+        if filename:
+            self._dual_csv_path.setText(filename)
+            if not self._dual_output_dir.text():
+                self._dual_output_dir.setText(str(Path(filename).parent / "bitmerger-output"))
+    def _choose_dual_output_dir(self) -> None:
+        directory = QFileDialog.getExistingDirectory(self, "Choose Output Folder", self._dual_output_dir.text())
+        if directory:
+            self._dual_output_dir.setText(directory)
+
+    def _set_dual_merge_running(self, running: bool) -> None:
+        """Freeze all source settings so displayed paths match the active worker."""
+        self._dual_merge_button.setEnabled(not running)
+        for control in self._dual_controls + self._dual_browse_buttons:
+            control.setEnabled(not running)
+
+    def _on_dual_merge(self) -> None:
+        bitwarden_path = Path(self._dual_bw_path.text()) if self._dual_bw_path.text() else None
+        onepassword_path = Path(self._dual_1p_path.text()) if self._dual_1p_path.text() else None
+        csv_path = Path(self._dual_csv_path.text()) if self._dual_csv_path.text() else None
+        output_dir = Path(self._dual_output_dir.text()) if self._dual_output_dir.text() else None
+        if not bitwarden_path or not onepassword_path or not output_dir:
+            QMessageBox.warning(self, "Missing source", "Choose both source vaults and an output folder first.")
+            return
+        if not bitwarden_path.is_file() or not onepassword_path.is_file():
+            QMessageBox.warning(self, "Missing source", "One or both selected vault files no longer exist.")
+            return
+        if csv_path and not csv_path.is_file():
+            QMessageBox.warning(self, "Missing CSV", "The selected optional 1Password CSV file no longer exists.")
+            return
+        overwrite = False
+        existing_outputs = [path for path in expected_merge_outputs(output_dir) if path.exists()]
+        if existing_outputs:
+            names = "\n".join(f"• {path.name}" for path in existing_outputs)
+            reply = QMessageBox.question(
+                self,
+                "Replace Existing Outputs?",
+                "The following plaintext output file(s) already exist:\n\n"
+                f"{names}\n\nReplace them? This cannot be undone.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+            overwrite = True
+        reply = QMessageBox.question(
+            self,
+            "Create merged vaults?",
+            "Bitmerger will create two new plaintext export files and an audit report in the output folder. "
+            "The two selected source files will not be changed. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        self._dual_result.clear()
+        self._set_dual_merge_running(True)
+        self._progress_smooth.show()
+        self._status.setText("Merging Bitwarden and 1Password vaults…")
+        self._dual_merge_worker = DualVaultMergeWorker(bitwarden_path, onepassword_path, output_dir, self._dual_threshold.value(), onepassword_csv_path=csv_path, overwrite=overwrite)
+        self._dual_merge_worker.finished.connect(self._on_dual_merge_finished)
+        self._dual_merge_worker.error.connect(self._on_dual_merge_error)
+        self._dual_merge_worker.start()
+
+    def _on_dual_merge_finished(self, result: object) -> None:
+        self._progress_smooth.hide()
+        self._set_dual_merge_running(False)
+        if not isinstance(result, DualMergeResult):
+            self._on_dual_merge_error("Unexpected merge result")
+            return
+        lines = [
+            f"Merged {result.merged_count} safe duplicate(s) across {result.input_count} input items.",
+            f"Final item count: {result.output_count}",
+            "",
+            f"Bitwarden JSON: {result.bitwarden_output}",
+            f"1Password 1PUX: {result.onepassword_output}",
+            f"Audit report: {result.report_output}",
+        ]
+        if result.warnings:
+            lines.extend(["", "Format notes:", *[f"• {warning}" for warning in result.warnings]])
+        self._dual_result.setPlainText("\n".join(lines))
+        self._status.setText(f"Created both vault outputs ({result.output_count} items)")
+        QMessageBox.information(self, "Merged Vaults Created", "\n".join(lines[:6]))
+
+    def _on_dual_merge_error(self, message: str) -> None:
+        self._progress_smooth.hide()
+        self._set_dual_merge_running(False)
+        self._status.setText("Cross-vault merge failed")
+        self._dual_result.setPlainText(f"Merge failed:\n{message}")
+        QMessageBox.critical(self, "Cross-vault Merge Failed", message)
 
     # --- Batch Editor ---
 

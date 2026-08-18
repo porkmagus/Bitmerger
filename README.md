@@ -1,7 +1,7 @@
 # 🔐 Bitmerger
 
-> **Intelligent, safe deduplication for Bitwarden vaults.**  
-> Auto-merge duplicate entries with confidence scoring. One click. Zero data loss.
+> **Safe Bitwarden and 1Password vault cleanup.**
+> Reviewable, strict-confidence deduplication with originals left untouched.
 
 ---
 
@@ -9,7 +9,6 @@
 - [What It Does](#what-it-does)
 - [Quick Start](#quick-start)
 - [Features](#features)
-- [Health Audit](#health-audit)
 - [Safety Guarantees](#safety-guarantees)
 - [How It Works](#how-it-works)
 - [Testing](#testing)
@@ -20,19 +19,22 @@
 
 ## ✨ What It Does
 
-After years of use, Bitwarden vaults accumulate duplicate entries:
+After years of use, password-manager vaults accumulate duplicate entries:
 
 - **Multiple logins** for the same site (different URIs, older entries)
 - **Overlapping imports** where the same account appears twice
 - **Split accounts** where one entry has the TOTP and another has the passkey
 - **Typos and variants** (e.g., `twitter.com` vs `x.com`)
+- **Cross-manager drift** after moving between Bitwarden and 1Password
 
 **This tool:**
-1. Finds all duplicates using smart domain & credential blocking
-2. Scores each cluster with a confidence percentage
-3. Auto-merges duplicates into the best primary entry
-4. Creates backups, logs, and an HTML report
-5. Outputs a clean JSON file ready to re-import
+1. Opens Bitwarden JSON exports and 1Password Unencrypted Export (`.1pux`) archives.
+2. Finds duplicates using smart domain & credential blocking, then only merges at a strict default confidence of 95%.
+3. Carries forward non-conflicting URIs, custom fields, notes, password history, passkeys, and favorites without duplicate copies.
+4. Leaves both originals untouched and writes an audit report for every generated output.
+5. Produces a Bitwarden JSON import file plus a standards-shaped 1Password 1PUX archive.
+
+**Important format boundary:** Bitwarden documents its JSON import format. 1Password documents 1PUX as its unencrypted export format, not as a supported import path. Bitmerger validates its archive structure against that published specification; use the generated 1PUX as a portable cleaned archive or follow 1Password's currently supported import flow. Attachments and document items are never silently discarded: any limitation is called out in the audit report before you act.
 
 **Supports all 5 Bitwarden item types:**
 
@@ -78,11 +80,18 @@ source .venv/bin/activate        # macOS/Linux
 pip install -r requirements.txt
 ```
 
-### 2. Export Your Vault
+### 2. Export Your Vaults
 
-1. Open **Bitwarden Web Vault** (or app)
-2. Go to **Tools** → **Export Vault** → **JSON**
-3. Save as `vault.json`
+**Bitwarden**
+
+1. Open **Bitwarden Web Vault** (or app).
+2. Go to **Tools** → **Export Vault** → **JSON**.
+3. Save as `bitwarden.json`.
+
+**1Password**
+
+1. In the 1Password desktop app, export a **1Password Unencrypted Export** (`.1pux`) file.
+2. Store it securely: it contains your secrets in plain text, just like a Bitwarden JSON export.
 
 ### 3. Launch Bitmerger
 
@@ -93,10 +102,18 @@ python3 bw_dedup.py
 ```
 
 **That's it!** The GUI will open:
-- Drag your `vault.json` into the window, or click **Open Vault**
-- Browse all items in the **Vault Overview** tab
-- Click **🔍 Analyze Duplicates** in the **Deduplicate** tab
-- Review the **HTML Report** before importing
+- Open a Bitwarden JSON export to use **Vault Overview**, **Deduplicate**, and **Batch Editor**.
+- Select **Merge Vaults** to choose one Bitwarden JSON export and one 1Password `.1pux` export. Optionally add a 1Password CSV export to enrich matching logins with validated `OTPAuth` TOTP URIs before generating both cleaned formats plus an audit report.
+- Review the audit report and any format warnings before importing or replacing anything.
+
+### Command-line cross-vault merge
+
+```bash
+python3 -m bitmerger.cli merge-vaults bitwarden.json onepassword.1pux \\
+  --output-dir ./bitmerger-output --threshold 0.95
+```
+
+This leaves the two source exports untouched and writes `bitmerger-merged.bitwarden.json`, `bitmerger-merged.1password.1pux`, and `bitmerger-merged.report.json`.
 
 ---
 
@@ -126,68 +143,14 @@ python3 bw_dedup.py
 - Execute merge with one click
 
 ### Batch Editor
-- Search across **all** Bitwarden fields with `field:value` syntax: `favorite:true`, `type:login`, `folder:Personal`, `username:alice`, `domain:github.com`, `notes:backup`, `id:abc`, `org:my-org`, `collection:shared`
+- Search across loaded Bitwarden or 1Password fields with `field:value` syntax: `favorite:true`, `type:login`, `folder:Personal`, `username:alice`, `domain:github.com`, `notes:backup`, `id:abc`, `org:my-org`, `collection:shared`
 - Bulk edit fields: **Name**, **Username**, **Notes**, **Favorite**, **Reprompt**, **Folder**
-- Toggle booleans (Favorite, Reprompt) with a checkbox
-- Apply to selected rows or all visible matches
-- Preview matches before applying
-- Undo/redo supported
-- Exports `.edited.json` with a `.batch-edit-log.json` audit trail
+- Apply to selected rows or all visible matches and export the active vault format with an audit log.
 
-### Health Audit
-- One-click scan for:
-  - **Weak passwords** — <8 chars or common patterns
-  - **Reused passwords** — Clusters sharing the same password
-  - **Missing TOTP** — Logins for known 2FA providers without TOTP
-  - **Empty passwords** — Logins with no password
-- Export results as CSV
-
-### Dark / Light / Auto Theme
-- Toggle via menu or the 🌙 button in the header
-- Fully recolored tables, buttons, inputs, and panels
-- Persists across restarts
-
-### Drag & Drop
-- Drop any `.json` file onto the window to load instantly
-
-### Undo / Redo
-- `Ctrl+Z` / `Ctrl+Shift+Z` for every edit, merge, and rename
-- Descriptive undo labels in the Edit menu
-- 50-step history with deep-copy snapshots
-
-### Keyboard Shortcuts
-
-| Shortcut | Action |
-|----------|--------|
-| `Ctrl+O` | Open vault |
-| `Ctrl+S` | Save vault |
-| `Ctrl+Shift+S` | Export CSV |
-| `Ctrl+F` | Focus search |
-| `Ctrl+M` | Analyze duplicates |
-| `Ctrl+D` | Dry run |
-| `Ctrl+Z` | Undo |
-| `Ctrl+Shift+Z` | Redo |
-| `Ctrl+T` | Toggle theme |
-| `Delete` | Delete item |
-| `F1` | Keyboard shortcuts overlay |
-
-### Welcome Wizard
-- First-run guide with **Open Vault** and **Load Sample** buttons
-- Sample vault creates 5 demo items for exploration
-
----
-
-## 🏥 Health Audit
-
-1. Open the **Health Audit** tab
-2. Click **Run Health Audit**
-3. Review the report:
-   - **Weak passwords** — Items with <8 chars or common patterns (`password123`, `123456`)
-   - **Reused passwords** — Clusters of items sharing the same password
-   - **Missing TOTP** — Logins for known 2FA providers without a TOTP secret
-   - **Empty passwords** — Logins with no password set
-
-Export the results as a CSV from the File menu for spreadsheet review.
+### Merge Vaults
+- Choose one Bitwarden JSON export and one 1Password `.1pux` export.
+- Use a conservative 95% default confidence threshold; ambiguous records remain separate.
+- Receive both cleaned output formats and a JSON audit report that names all format warnings.
 
 ---
 

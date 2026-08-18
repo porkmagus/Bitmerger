@@ -10,11 +10,13 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import Qt, QItemSelectionModel
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from bitmerger.gui import MainWindow
 from bitmerger.item_editor import ItemEditor
 from bitmerger.core import BwItem, load_vault
+from bitmerger.vault_formats import save_1password
+from bitmerger.theme import ThemeManager
 
 
 @pytest.fixture
@@ -99,6 +101,13 @@ class TestMainWindowLaunch:
         assert window.isVisible()
         assert window.windowTitle().startswith("Bitmerger")
 
+    def test_theme_manager_can_be_reconstructed(self, qtbot):
+        app = QApplication.instance()
+        assert isinstance(app, QApplication)
+        first = ThemeManager(app)
+        second = ThemeManager(app)
+        assert first is second
+
     def test_main_window_loads_vault(self, qtbot, tmp_vault):
         window = MainWindow()
         qtbot.add_widget(window)
@@ -116,6 +125,20 @@ class TestMainWindowLaunch:
 
 class TestVaultTable:
     """Test vault table interactions."""
+
+    def test_load_1password_uses_native_format(self, qtbot, tmp_path):
+        vault_path = tmp_path / "onepassword.1pux"
+        save_1password(vault_path, [BwItem(id="login-1", type=1, name="Example")])
+        window = MainWindow()
+        qtbot.add_widget(window)
+        window._load_vault(vault_path)
+        assert window._vault_format == "1password"
+        assert len(window._items) == 1
+        output_path = window._derived_output_path("dedup")
+        assert output_path.suffix == ".1pux"
+        saved_path = tmp_path / "cleaned.1pux"
+        window._save_current_format(saved_path)
+        assert saved_path.exists()
 
     def test_items_appear_in_table(self, qtbot, tmp_vault):
         window = MainWindow()
@@ -173,10 +196,11 @@ class TestTabSwitching:
         qtbot.wait(200)
 
         tabs = window._tabs
-        assert tabs.count() == 3
+        assert tabs.count() == 4
         assert tabs.tabText(0) == "Vault Overview"
         assert tabs.tabText(1) == "Deduplicate"
         assert tabs.tabText(2) == "Batch Editor"
+        assert tabs.tabText(3) == "Merge Vaults"
 
     def test_switch_to_dedup_tab(self, qtbot, tmp_vault):
         window = MainWindow()

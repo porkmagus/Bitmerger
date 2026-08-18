@@ -28,7 +28,14 @@ class ThemeManager(QObject):
         return cls._instance
 
     def __init__(self, app: Optional[QApplication] = None) -> None:
+        # QObject may only be initialized once. __new__ intentionally returns a
+        # singleton so subsequent construction calls must be harmless.
+        if getattr(self, "_initialized", False):
+            if app is not None:
+                self._app = app
+            return
         super().__init__(None)
+        self._initialized = True
         self._app = app
         self._theme = Theme.AUTO
         self._load_theme()

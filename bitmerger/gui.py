@@ -31,8 +31,9 @@ from .core import (
 )
 from .fluidity import (
     SmoothVisibility, ButtonPulse, StatusPulse,
-    CheckboxPulse, HoverHighlight, animate_table_refresh,
+    CheckboxPulse, animate_table_refresh,
 )
+from .theme import get_theme_manager
 from .vault_formats import (
     DualMergeResult, MergePreflight, VaultFormatError, decision_key, expected_merge_outputs, load_document, merge_vaults, persist_never_suggest, preflight_merge, source_fingerprint,
     save_bitwarden, save_1password,
@@ -440,8 +441,9 @@ class MainWindow(QMainWindow):
         CheckboxPulse(self._fast_check)
         for cb in self._type_checks.values():
             CheckboxPulse(cb)
-        HoverHighlight(settings)
-        HoverHighlight(results)
+        # Deliberately no group-box hover stylesheet: Windows Qt recomputes
+        # group-box contents margins while the pointer crosses its children.
+        # That caused spin controls to visibly resize.
 
         return w
 
@@ -545,9 +547,6 @@ class MainWindow(QMainWindow):
         ButtonPulse(self._batch_apply_btn)
         for cb in self._batch_type_checks.values():
             CheckboxPulse(cb)
-        HoverHighlight(search_group)
-        HoverHighlight(results)
-        HoverHighlight(edit_group)
 
         return w
 
@@ -1384,6 +1383,8 @@ def run() -> None:
     app = QApplication(sys.argv)
     app.setApplicationName("Bitmerger")
     app.setOrganizationName("bitmerger")
+    app.setFont(QFont("Segoe UI", 10))
+    get_theme_manager(app)._apply_stylesheet()
     window = MainWindow()
     window.show()
     sys.exit(app.exec())

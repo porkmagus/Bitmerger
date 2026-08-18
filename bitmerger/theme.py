@@ -141,10 +141,7 @@ class ThemeManager(QObject):
             background: {p["bg"]};
             border: none;
         }}
-        /* Round 1: Global smooth transitions */
-        QPushButton, QLineEdit, QTextEdit, QComboBox, QSpinBox, QDoubleSpinBox, QCheckBox::indicator {{
-            transition: all 150ms ease;
-        }}
+        /* Qt stylesheets intentionally avoid unsupported CSS transitions. */
         QGroupBox {{
             font-weight: bold;
             border: 1px solid {p["border"]};
@@ -328,11 +325,6 @@ class ThemeManager(QObject):
             border-color: {p["accent"]};
             image: none;
         }}
-        QCheckBox::indicator:checked::after {{
-            content: "✓";
-            color: {p["bg"]};
-            font-weight: bold;
-        }}
         QSpinBox, QDoubleSpinBox {{
             background: {p["input_bg"]};
             border: 1px solid {p["border"]};
@@ -340,6 +332,9 @@ class ThemeManager(QObject):
             padding: 4px 8px;
             color: {p["fg"]};
             font-size: 13px;
+            min-width: 96px;
+            max-width: 96px;
+            min-height: 30px;
         }}
         QSpinBox:hover, QDoubleSpinBox:hover {{
             border-color: {p["muted"]};

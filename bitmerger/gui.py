@@ -7,6 +7,7 @@ Usage:
 """
 
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
@@ -33,7 +34,7 @@ from .fluidity import (
     CheckboxPulse, HoverHighlight, animate_table_refresh,
 )
 from .vault_formats import (
-    DualMergeResult, VaultFormatError, expected_merge_outputs, load_document, merge_vaults,
+    DualMergeResult, MergePreflight, VaultFormatError, decision_key, expected_merge_outputs, load_document, merge_vaults, persist_never_suggest, preflight_merge, source_fingerprint,
     save_bitwarden, save_1password,
 )
 
@@ -86,24 +87,41 @@ class DualVaultMergeWorker(QThread):
     finished = Signal(object)
     error = Signal(str)
 
-    def __init__(self, bitwarden_path: Path, onepassword_path: Path, output_dir: Path, threshold: float, onepassword_csv_path: Optional[Path] = None, overwrite: bool = False) -> None:
+    def __init__(self, bitwarden_path: Path, onepassword_path: Path, output_dir: Path, threshold: float, onepassword_csv_path: Optional[Path] = None, manual_merge_groups: Optional[list[list[str]]] = None, decision_log: Optional[list[dict[str, Any]]] = None, overwrite: bool = False) -> None:
         super().__init__()
         self.bitwarden_path = bitwarden_path
         self.onepassword_path = onepassword_path
         self.output_dir = output_dir
         self.threshold = threshold
         self.onepassword_csv_path = onepassword_csv_path
+        self.manual_merge_groups = manual_merge_groups or []
+        self.decision_log = decision_log or []
         self.overwrite = overwrite
 
     def run(self) -> None:
         try:
-            self.finished.emit(merge_vaults(self.bitwarden_path, self.onepassword_path, self.output_dir, self.threshold, onepassword_csv_path=self.onepassword_csv_path, overwrite=self.overwrite))
+            self.finished.emit(merge_vaults(self.bitwarden_path, self.onepassword_path, self.output_dir, self.threshold, onepassword_csv_path=self.onepassword_csv_path, manual_merge_groups=self.manual_merge_groups, decision_log=self.decision_log, overwrite=self.overwrite))
         except Exception as exc:
             self.error.emit(str(exc))
 
 
-# ---------------------------------------------------------------------------
-# Vault table widget (reusable)
+class PreflightWorker(QThread):
+    finished = Signal(object)
+    error = Signal(str)
+
+    def __init__(self, bitwarden_path: Path, onepassword_path: Path, threshold: float, csv_path: Optional[Path]) -> None:
+        super().__init__()
+        self.bitwarden_path = bitwarden_path
+        self.onepassword_path = onepassword_path
+        self.threshold = threshold
+        self.csv_path = csv_path
+
+    def run(self) -> None:
+        try:
+            self.finished.emit(preflight_merge(self.bitwarden_path, self.onepassword_path, self.threshold, self.csv_path))
+        except Exception as exc:
+            self.error.emit(str(exc))
+
 # ---------------------------------------------------------------------------
 
 class VaultTable(QTableWidget):
@@ -213,6 +231,9 @@ class MainWindow(QMainWindow):
         self._dedup_worker: Optional[DedupWorker] = None
         self._batch_worker: Optional[BatchSearchWorker] = None
         self._dual_merge_worker: Optional[DualVaultMergeWorker] = None
+        self._preflight_worker: Optional[PreflightWorker] = None
+        self._latest_preflight: Optional[MergePreflight] = None
+        self._review_decisions: list[dict[str, Any]] = []
 
         self._build_ui()
         self._apply_fluidity()
@@ -1152,7 +1173,16 @@ class MainWindow(QMainWindow):
         strict_row.addWidget(self._dual_threshold)
         strict_row.addStretch()
         output_layout.addLayout(strict_row)
+        self._dual_versioned_dir = QCheckBox("Create a unique timestamped run folder")
+        self._dual_versioned_dir.setChecked(True)
+        self._dual_versioned_dir.setToolTip("Keeps each merge's plaintext artifacts separate for audit and rollback.")
+        self._dual_controls.append(self._dual_versioned_dir)
+        output_layout.addWidget(self._dual_versioned_dir)
         layout.addWidget(output)
+
+        self._dual_preview_button = QPushButton("Preview Safety & Duplicates")
+        self._dual_preview_button.clicked.connect(self._on_dual_preflight)
+        layout.addWidget(self._dual_preview_button)
 
         self._dual_merge_button = QPushButton("Merge and Create Both Vaults")
         self._dual_merge_button.setAccessibleName("Merge selected vaults")
@@ -1164,6 +1194,19 @@ class MainWindow(QMainWindow):
         self._dual_result.setReadOnly(True)
         self._dual_result.setPlaceholderText("Output paths and any format-preservation warnings will appear here.")
         layout.addWidget(self._dual_result, 1)
+        review_row = QHBoxLayout()
+        self._review_combo = QComboBox()
+        self._review_combo.setPlaceholderText("Run a preflight to load ambiguous candidates")
+        review_row.addWidget(self._review_combo, 1)
+        merge_choice = QPushButton("Merge Selected")
+        merge_choice.clicked.connect(lambda: self._record_review_decision("merge"))
+        keep_choice = QPushButton("Keep Separate")
+        keep_choice.clicked.connect(lambda: self._record_review_decision("keep"))
+        never_choice = QPushButton("Never Suggest")
+        never_choice.clicked.connect(lambda: self._record_review_decision("never"))
+        for button in (merge_choice, keep_choice, never_choice):
+            review_row.addWidget(button)
+        layout.addLayout(review_row)
         return widget
 
     def _choose_dual_bitwarden(self) -> None:
@@ -1194,9 +1237,58 @@ class MainWindow(QMainWindow):
     def _set_dual_merge_running(self, running: bool) -> None:
         """Freeze all source settings so displayed paths match the active worker."""
         self._dual_merge_button.setEnabled(not running)
+        self._dual_preview_button.setEnabled(not running)
         for control in self._dual_controls + self._dual_browse_buttons:
             control.setEnabled(not running)
 
+    def _record_review_decision(self, action: str) -> None:
+        candidate = self._review_combo.currentData()
+        if not isinstance(candidate, dict):
+            return
+        entry = {"action": action, "ids": candidate.get("ids", []), "names": candidate.get("names", []), "confidence": candidate.get("confidence")}
+        self._review_decisions = [item for item in self._review_decisions if item.get("ids") != entry["ids"]]
+        self._review_decisions.append(entry)
+        if action == "never" and self._latest_preflight:
+            persist_never_suggest(self._latest_preflight.source_fingerprints, entry["ids"])
+            self._review_combo.removeItem(self._review_combo.currentIndex())
+        self._status.setText(f"Review decision recorded: {action} selected candidate")
+    def _on_dual_preflight(self) -> None:
+        bw = Path(self._dual_bw_path.text()) if self._dual_bw_path.text() else None
+        one = Path(self._dual_1p_path.text()) if self._dual_1p_path.text() else None
+        csv_path = Path(self._dual_csv_path.text()) if self._dual_csv_path.text() else None
+        if not bw or not one or not bw.is_file() or not one.is_file() or (csv_path and not csv_path.is_file()):
+            QMessageBox.warning(self, "Missing source", "Choose existing Bitwarden JSON and 1Password 1PUX source files first.")
+            return
+        self._dual_preview_button.setEnabled(False)
+        self._status.setText("Analyzing merge safety and duplicate candidates…")
+        self._preflight_worker = PreflightWorker(bw, one, self._dual_threshold.value(), csv_path)
+        self._preflight_worker.finished.connect(self._on_dual_preflight_finished)
+        self._preflight_worker.error.connect(self._on_dual_preflight_error)
+        self._preflight_worker.start()
+
+    def _on_dual_preflight_finished(self, result: object) -> None:
+        self._dual_preview_button.setEnabled(True)
+        if not isinstance(result, MergePreflight):
+            self._on_dual_preflight_error("Unexpected preflight result")
+            return
+        self._latest_preflight = result
+        self._review_decisions = []
+        self._review_combo.clear()
+        for index, candidate in enumerate(result.ambiguous_candidates, start=1):
+            self._review_combo.addItem(f"{index}. {candidate['confidence']:.0%} — {' / '.join(candidate['names'])}", candidate)
+        lines = [f"Preflight: {result.input_count} input items", f"Safe automatic merges at current threshold: {result.strict_candidates}", f"Ambiguous candidates kept separate: {len(result.ambiguous_candidates)}", f"Bitwarden passkeys retained: {result.passkey_count}", f"Attachment/document manifest entries: {result.attachment_count}", f"1Password vaults: {', '.join(result.vault_names) or '(none)'}"]
+        if result.ambiguous_candidates:
+            lines.extend(["", "Review queue (kept separate):", *[f"• {entry['confidence']:.0%} — {entry['size']} items: {' / '.join(entry['names'])}" for entry in result.ambiguous_candidates[:20]]])
+        if result.warnings:
+            lines.extend(["", "Fidelity and migration notes:", *[f"• {warning}" for warning in result.warnings]])
+        self._dual_result.setPlainText("\n".join(lines))
+        self._status.setText("Preflight complete — review notes, then create outputs when ready")
+
+    def _on_dual_preflight_error(self, message: str) -> None:
+        self._dual_preview_button.setEnabled(True)
+        self._status.setText("Preflight failed")
+        self._dual_result.setPlainText(f"Preflight failed:\n{message}")
+        QMessageBox.critical(self, "Merge Preflight Failed", message)
     def _on_dual_merge(self) -> None:
         bitwarden_path = Path(self._dual_bw_path.text()) if self._dual_bw_path.text() else None
         onepassword_path = Path(self._dual_1p_path.text()) if self._dual_1p_path.text() else None
@@ -1211,6 +1303,15 @@ class MainWindow(QMainWindow):
         if csv_path and not csv_path.is_file():
             QMessageBox.warning(self, "Missing CSV", "The selected optional 1Password CSV file no longer exists.")
             return
+        if self._latest_preflight:
+            current = {str(path): source_fingerprint(path) for path in (bitwarden_path, onepassword_path) if path}
+            if csv_path:
+                current[str(csv_path)] = source_fingerprint(csv_path)
+            if current != self._latest_preflight.source_fingerprints:
+                QMessageBox.warning(self, "Sources changed", "A source changed after preflight. Preview safety and duplicates again before creating outputs.")
+                return
+        if self._dual_versioned_dir.isChecked():
+            output_dir = output_dir / f"bitmerger-run-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}"
         overwrite = False
         existing_outputs = [path for path in expected_merge_outputs(output_dir) if path.exists()]
         if existing_outputs:
@@ -1240,7 +1341,8 @@ class MainWindow(QMainWindow):
         self._set_dual_merge_running(True)
         self._progress_smooth.show()
         self._status.setText("Merging Bitwarden and 1Password vaults…")
-        self._dual_merge_worker = DualVaultMergeWorker(bitwarden_path, onepassword_path, output_dir, self._dual_threshold.value(), onepassword_csv_path=csv_path, overwrite=overwrite)
+        manual_groups = [entry["ids"] for entry in self._review_decisions if entry.get("action") == "merge"]
+        self._dual_merge_worker = DualVaultMergeWorker(bitwarden_path, onepassword_path, output_dir, self._dual_threshold.value(), onepassword_csv_path=csv_path, manual_merge_groups=manual_groups, decision_log=self._review_decisions, overwrite=overwrite)
         self._dual_merge_worker.finished.connect(self._on_dual_merge_finished)
         self._dual_merge_worker.error.connect(self._on_dual_merge_error)
         self._dual_merge_worker.start()

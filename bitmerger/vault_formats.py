@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import csv
+import hashlib
 import json
 import os
 import shutil
@@ -64,6 +65,20 @@ class VaultDocument:
 
 
 @dataclass
+class MergePreflight:
+    """Non-secret review data shown before a merge creates plaintext outputs."""
+
+    input_count: int
+    strict_candidates: int
+    ambiguous_candidates: list[dict[str, Any]]
+    passkey_count: int
+    attachment_count: int
+    vault_names: list[str]
+    source_fingerprints: dict[str, str]
+    warnings: list[str] = field(default_factory=list)
+
+
+@dataclass
 class DualMergeResult:
     """Outputs and auditable merge metadata from a dual-vault run."""
 
@@ -74,6 +89,7 @@ class DualMergeResult:
     output_count: int
     merged_count: int
     cluster_count: int
+    manifest_output: Path | None = None
     warnings: list[str] = field(default_factory=list)
 
 
@@ -87,6 +103,48 @@ def expected_merge_outputs(output_dir: Path) -> tuple[Path, Path, Path]:
     )
 
 
+def source_fingerprint(path: Path) -> str:
+    """Return a streaming SHA-256 fingerprint without retaining vault contents."""
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def decision_store_path() -> Path:
+    """User-local, secret-free store for persistent ambiguous-match decisions."""
+    override = os.environ.get("BITMERGER_DECISION_STORE")
+    return Path(override).expanduser() if override else Path.home() / ".bitmerger" / "merge-decisions.json"
+
+
+def decision_key(fingerprints: dict[str, str], ids: list[str]) -> str:
+    material = json.dumps({"sources": fingerprints, "ids": sorted(ids)}, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+def load_never_suggest_decisions(path: Path | None = None) -> set[str]:
+    path = path or decision_store_path()
+    if not path.is_file():
+        return set()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return {str(key) for key, value in data.get("never_suggest", {}).items() if value is True}
+    except (OSError, json.JSONDecodeError):
+        return set()
+
+
+def persist_never_suggest(fingerprints: dict[str, str], ids: list[str], path: Path | None = None) -> None:
+    path = path or decision_store_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    existing = load_never_suggest_decisions(path)
+    existing.add(decision_key(fingerprints, ids))
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        json.dump({"never_suggest": {key: True for key in sorted(existing)}}, handle, indent=2)
+    temporary.replace(path)
+    path.chmod(0o600)
 def _validate_1pux_archive(archive: zipfile.ZipFile) -> None:
     """Reject malformed or bomb-scale 1PUX archives before reading payloads."""
     infos = archive.infolist()
@@ -237,9 +295,20 @@ def _onepassword_to_item(raw_item: dict[str, Any], vault_name: str, fallback_ind
     custom_fields = _onepassword_fields(raw_item)
     if tags:
         custom_fields.extend({"name": "1Password tag", "value": str(tag), "type": 0} for tag in tags)
+    state = str(raw_item.get("state") or "active")
+    if state != "active":
+        custom_fields.append({"name": "1Password state", "value": state, "type": 0})
+    custom_fields.append({"name": "1Password vault", "value": vault_name, "type": 0})
     if category not in _ONEPASSWORD_CATEGORY_TO_BW:
         warnings.append(f"1Password item '{title}' uses unsupported category {category or 'unknown'}; retained as a secure note.")
         custom_fields.append({"name": "1Password category", "value": category or "unknown", "type": 0})
+
+    raw_history = details.get("passwordHistory")
+    history = []
+    if isinstance(raw_history, list):
+        for entry in raw_history:
+            if isinstance(entry, dict) and entry.get("value"):
+                history.append({"password": _as_text(entry.get("value")), "lastUsedDate": str(entry.get("time") or "")})
 
     item = BwItem(
         id=f"1p-{source_scope}-{item_id}",
@@ -247,6 +316,7 @@ def _onepassword_to_item(raw_item: dict[str, Any], vault_name: str, fallback_ind
         name=title,
         notes=notes,
         favorite=bool(raw_item.get("favIndex", 0)),
+        passwordHistory=history or None,
         fields=custom_fields or None,
         login=LoginData(uris=uris, username=username or None, password=password or None) if bw_type == 1 else None,
         secureNote={"type": 0} if bw_type == 2 else None,
@@ -329,10 +399,11 @@ def _load_1password(path: Path) -> VaultDocument:
                     converted, item_warnings = _onepassword_to_item(raw_item, vault_name, index, f"{account_id}-{vault_id}")
                     items.append(converted)
                     warnings.extend(item_warnings)
-        attachment_count = len([name for name in archive.namelist() if name.startswith("files/") and not name.endswith("/")])
+        attachment_manifest = [{"archive_path": info.filename, "bytes": info.file_size} for info in archive.infolist() if info.filename.startswith("files/") and not info.is_dir()]
+        attachment_count = len(attachment_manifest)
         if attachment_count:
             warnings.append(f"The source 1Password export has {attachment_count} attachment(s). They are not converted into Bitwarden JSON.")
-    raw_data = {"onepassword": data, "attributes": attributes}
+    raw_data = {"onepassword": data, "attributes": attributes, "attachment_manifest": attachment_manifest}
     return VaultDocument("1password", items, raw_data, Path(path), warnings)
 
 
@@ -411,6 +482,8 @@ def _item_to_onepassword(item: BwItem) -> dict[str, Any]:
     if item.login:
         urls = [{"label": "", "url": uri.uri} for uri in item.login.uris if uri.uri]
     tags, portable_fields = _extract_onepassword_tags(item.fields)
+    state = "archived" if any(isinstance(field, dict) and field.get("name") == "1Password state" and field.get("value") == "archived" for field in portable_fields) else "active"
+    portable_fields = [field for field in portable_fields if not (isinstance(field, dict) and field.get("name") == "1Password state")]
     details: dict[str, Any] = {"notesPlain": item.notes or "", "sections": _bw_custom_fields_to_sections(portable_fields)}
     if item.login:
         login_fields: list[dict[str, Any]] = []
@@ -419,6 +492,8 @@ def _item_to_onepassword(item: BwItem) -> dict[str, Any]:
         if item.login.password:
             login_fields.append({"value": item.login.password, "id": "password", "name": "password", "fieldType": "P", "designation": "password"})
         details["loginFields"] = login_fields
+    if item.passwordHistory:
+        details["passwordHistory"] = [{"value": entry.get("password", ""), "time": entry.get("lastUsedDate", "")} for entry in item.passwordHistory if isinstance(entry, dict) and entry.get("password")]
     if item.card:
         card_fields = [{"title": key, "id": str(uuid.uuid4()), "value": {"concealed": str(value)} if key in {"number", "code"} else str(value)} for key, value in item.card.items() if value not in (None, "")]
         if card_fields:
@@ -436,7 +511,7 @@ def _item_to_onepassword(item: BwItem) -> dict[str, Any]:
         "favIndex": 1 if item.favorite else 0,
         "createdAt": int(time.time()),
         "updatedAt": int(time.time()),
-        "state": "active",
+        "state": state,
         "categoryUuid": category,
         "overview": {"title": item.name, "url": urls[0]["url"] if urls else "", "urls": urls, "tags": tags},
         "details": details,
@@ -518,12 +593,65 @@ def _dedupe_strictly(items: list[BwItem], threshold: float) -> tuple[list[BwItem
     return [item for item in items if item.id not in merged_ids], len(merged_ids), len(clusters)
 
 
+def preflight_merge(bitwarden_path: Path, onepassword_path: Path, threshold: float = 0.95, onepassword_csv_path: Path | None = None) -> MergePreflight:
+    """Inspect sources and duplicate candidates without writing artifacts."""
+    bitwarden = load_document(Path(bitwarden_path))
+    onepassword = load_document(Path(onepassword_path))
+    csv_document = load_document(Path(onepassword_csv_path)) if onepassword_csv_path else None
+    if bitwarden.format != "bitwarden" or onepassword.format != "1password":
+        raise VaultFormatError("Preflight requires Bitwarden JSON and 1Password 1PUX sources")
+    if csv_document and csv_document.format != "1password_csv":
+        raise VaultFormatError("The optional enrichment source must be a 1Password CSV")
+    items = bitwarden.items + onepassword.items + (csv_document.items if csv_document else [])
+    clusters, _ = find_duplicates_by_type(items, threshold=max(0.75, threshold - 0.20), fast=False)
+    strict = [cluster for cluster in clusters if cluster_confidence(cluster) >= threshold]
+    ambiguous = []
+    for cluster in clusters:
+        confidence = cluster_confidence(cluster)
+        if 0.75 <= confidence < threshold:
+            ambiguous.append({"confidence": round(confidence, 3), "names": [item.name for item in cluster[:3]], "ids": [item.id for item in cluster], "size": len(cluster)})
+    passkeys = sum(len(item.login.fido2Credentials or []) for item in items if item.login)
+    attachment_manifest = onepassword.raw_data.get("attachment_manifest", [])
+    vault_names = sorted({str(field.get("value")) for item in onepassword.items for field in (item.fields or []) if isinstance(field, dict) and field.get("name") == "1Password vault" and field.get("value")})
+    warnings = bitwarden.warnings + onepassword.warnings + (csv_document.warnings if csv_document else [])
+    if passkeys and not any(item.login and item.login.fido2Credentials for item in onepassword.items):
+        warnings.append("Passkeys are present in Bitwarden; 1Password desktop exports do not carry passkeys. Use Credential Exchange on iOS or Android for 1Password passkeys.")
+    fingerprints = {str(Path(bitwarden_path)): source_fingerprint(bitwarden_path), str(Path(onepassword_path)): source_fingerprint(onepassword_path)}
+    if onepassword_csv_path:
+        fingerprints[str(Path(onepassword_csv_path))] = source_fingerprint(onepassword_csv_path)
+    suppressed = load_never_suggest_decisions()
+    retained_ambiguous = [candidate for candidate in ambiguous if decision_key(fingerprints, candidate["ids"]) not in suppressed]
+    if len(retained_ambiguous) < len(ambiguous):
+        warnings.append(f"Suppressed {len(ambiguous) - len(retained_ambiguous)} saved never-suggest candidate(s).")
+    return MergePreflight(input_count=len(items), strict_candidates=len(strict), ambiguous_candidates=retained_ambiguous, passkey_count=passkeys, attachment_count=len(attachment_manifest), vault_names=vault_names, source_fingerprints=fingerprints, warnings=warnings)
+
+
+def _apply_manual_merges(items: list[BwItem], groups: list[list[str]]) -> tuple[list[BwItem], int]:
+    """Apply only user-approved ambiguous merges; missing IDs are safely ignored."""
+    by_id = {item.id: item for item in items}
+    removed: set[str] = set()
+    merged_count = 0
+    for group in groups:
+        members = [by_id[item_id] for item_id in group if item_id in by_id and item_id not in removed]
+        if len(members) < 2 or len({item.type for item in members}) != 1:
+            continue
+        primary = members[0]
+        for secondary in members[1:]:
+            primary, _ = merge_items(primary, secondary)
+            removed.add(secondary.id)
+            merged_count += 1
+        by_id[primary.id] = primary
+    return [item for item in items if item.id not in removed], merged_count
+
+
 def merge_vaults(
     bitwarden_path: Path,
     onepassword_path: Path,
     output_dir: Path,
     threshold: float = 0.95,
     onepassword_csv_path: Path | None = None,
+    manual_merge_groups: list[list[str]] | None = None,
+    decision_log: list[dict[str, Any]] | None = None,
     *,
     overwrite: bool = False,
 ) -> DualMergeResult:
@@ -547,6 +675,8 @@ def merge_vaults(
     combined = copy.deepcopy(bitwarden.items) + copy.deepcopy(onepassword.items) + csv_items
     warnings = bitwarden.warnings + onepassword.warnings + (csv_document.warnings if csv_document else [])
     final_items, merged_count, cluster_count = _dedupe_strictly(combined, threshold)
+    final_items, manual_merged = _apply_manual_merges(final_items, manual_merge_groups or [])
+    merged_count += manual_merged
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     bw_output, onepassword_output, report_path = expected_merge_outputs(output_dir)
@@ -572,6 +702,8 @@ def merge_vaults(
         report = {
             "input_count": len(combined), "output_count": len(final_items), "merged_count": merged_count,
             "candidate_clusters": cluster_count, "threshold": threshold, "warnings": warnings,
+            "attachment_manifest": onepassword.raw_data.get("attachment_manifest", []),
+            "manual_review_decisions": decision_log or [],
             "bitwarden_output": str(bw_output), "onepassword_output": str(onepassword_output),
             "safety": "Only clusters at or above the configured confidence threshold were merged. Conflicting field values are retained in notes.",
         }

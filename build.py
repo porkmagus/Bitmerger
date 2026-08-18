@@ -38,6 +38,7 @@ def main() -> None:
         "--hidden-import", "bitmerger.icons",
         "--hidden-import", "bitmerger.item_editor",
         "--hidden-import", "bitmerger.undo_manager",
+        "--hidden-import", "bitmerger.vault_formats",
         "--hidden-import", "jinja2",
         "--hidden-import", "thefuzz",
         "--hidden-import", "tldextract",

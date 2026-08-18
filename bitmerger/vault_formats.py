@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import csv
+import base64
 import hashlib
 import json
 import os
@@ -41,7 +42,12 @@ VaultFormat = Literal["bitwarden", "1password", "1password_csv"]
 # categories are retained as secure notes rather than silently discarded.
 _ONEPASSWORD_CATEGORY_TO_BW = {"001": 1, "002": 3, "003": 2, "004": 4}
 _BW_CATEGORY_TO_ONEPASSWORD = {1: "001", 2: "003", 3: "002", 4: "004"}
-_OUTPUT_FILENAMES = ("bitmerger-merged.bitwarden.json", "bitmerger-merged.1password.1pux", "bitmerger-merged.report.json")
+_OUTPUT_FILENAMES = (
+    "bitmerger-merged.bitwarden.json",
+    "bitmerger-merged.1password.1pux",
+    "bitmerger-merged.1password-logins.csv",
+    "bitmerger-merged.report.json",
+)
 _MAX_1PUX_MEMBERS = 10_000
 _MAX_1PUX_TOTAL_BYTES = 250 * 1024 * 1024
 _MAX_1PUX_EXPORT_DATA_BYTES = 100 * 1024 * 1024
@@ -75,6 +81,7 @@ class MergePreflight:
     attachment_count: int
     vault_names: list[str]
     source_fingerprints: dict[str, str]
+    threshold: float
     warnings: list[str] = field(default_factory=list)
 
 
@@ -84,22 +91,27 @@ class DualMergeResult:
 
     bitwarden_output: Path
     onepassword_output: Path
+    csv_output: Path
     report_output: Path
     input_count: int
     output_count: int
     merged_count: int
     cluster_count: int
+    totp_count: int
+    passkey_count: int
+    password_login_count: int
     manifest_output: Path | None = None
     warnings: list[str] = field(default_factory=list)
 
 
-def expected_merge_outputs(output_dir: Path) -> tuple[Path, Path, Path]:
+def expected_merge_outputs(output_dir: Path) -> tuple[Path, Path, Path, Path]:
     """Return the fixed artifact names produced by a dual-vault merge."""
     directory = Path(output_dir)
     return (
         directory / _OUTPUT_FILENAMES[0],
         directory / _OUTPUT_FILENAMES[1],
         directory / _OUTPUT_FILENAMES[2],
+        directory / _OUTPUT_FILENAMES[3],
     )
 
 
@@ -461,6 +473,12 @@ def _bw_custom_fields_to_sections(fields: list[Any] | None) -> list[dict[str, An
     return [{"title": "Additional Fields", "name": "Section_bitmerger", "fields": section_fields}] if section_fields else []
 
 
+def _onepassword_uuid(*, upper: bool = False) -> str:
+    """Return the unpadded base32 identifier shape used in 1Password exports."""
+    value = base64.b32encode(uuid.uuid4().bytes).decode("ascii").rstrip("=")
+    return value if upper else value.lower()
+
+
 def _extract_onepassword_tags(fields: list[Any] | None) -> tuple[list[str], list[Any]]:
     """Recover adapter tag fields without polluting 1Password custom sections."""
     tags: list[str] = []
@@ -492,6 +510,20 @@ def _item_to_onepassword(item: BwItem) -> dict[str, Any]:
         if item.login.password:
             login_fields.append({"value": item.login.password, "id": "password", "name": "password", "fieldType": "P", "designation": "password"})
         details["loginFields"] = login_fields
+        if item.login.totp:
+            # The documented 1PUX field representation stores secret values as
+            # concealed values.  The companion CSV carries OTPAuth natively for
+            # importers that recognize it; this field prevents the secret from
+            # disappearing from the 1PUX artifact.
+            details["sections"].append({
+                "title": "One-Time Password",
+                "name": "Section_otp",
+                "fields": [{
+                    "title": "TOTP",
+                    "id": _onepassword_uuid(),
+                    "value": {"concealed": item.login.totp},
+                }],
+            })
     if item.passwordHistory:
         details["passwordHistory"] = [{"value": entry.get("password", ""), "time": entry.get("lastUsedDate", "")} for entry in item.passwordHistory if isinstance(entry, dict) and entry.get("password")]
     if item.card:
@@ -507,7 +539,7 @@ def _item_to_onepassword(item: BwItem) -> dict[str, Any]:
         if key_fields:
             details["sections"].append({"title": "SSH Key", "name": "Section_ssh", "fields": key_fields})
     return {
-        "uuid": str(uuid.uuid4()),
+        "uuid": _onepassword_uuid(),
         "favIndex": 1 if item.favorite else 0,
         "createdAt": int(time.time()),
         "updatedAt": int(time.time()),
@@ -542,6 +574,46 @@ def save_bitwarden(path: Path, items: Iterable[BwItem], source_data: dict[str, A
     return path
 
 
+def save_1password_login_csv(path: Path, items: Iterable[BwItem]) -> Path:
+    """Write a portable 1Password-shaped CSV for every final login item.
+
+    CSV has no safe, native representation for passkeys, cards, identities, or
+    arbitrary custom fields; the JSON/1PUX outputs remain the complete vault
+    artifacts.  This export deliberately contains only login rows rather than
+    coercing other item types into misleading login records.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    columns = ["Title", "Url", "Username", "Password", "OTPAuth", "Favorite", "Archived", "Tags", "Notes"]
+    with temporary.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=columns)
+        writer.writeheader()
+        for item in items:
+            if not item.login:
+                continue
+            tags, _ = _extract_onepassword_tags(item.fields)
+            archived = any(isinstance(field, dict) and field.get("name") == "1Password state" and field.get("value") == "archived" for field in item.fields or [])
+            writer.writerow({
+                "Title": item.name,
+                "Url": next((uri.uri for uri in item.login.uris if uri.uri), ""),
+                "Username": item.login.username or "",
+                "Password": item.login.password or "",
+                "OTPAuth": item.login.totp or "",
+                "Favorite": "TRUE" if item.favorite else "FALSE",
+                "Archived": "TRUE" if archived else "FALSE",
+                "Tags": ";".join(tags),
+                "Notes": item.notes or "",
+            })
+    # Confirm both the CSV shape and readable UTF-8 before moving it into view.
+    with temporary.open(newline="", encoding="utf-8") as handle:
+        if csv.DictReader(handle).fieldnames != columns:
+            raise VaultFormatError("Could not validate generated 1Password login CSV")
+    temporary.replace(path)
+    path.chmod(0o600)
+    return path
+
+
 def save_1password(path: Path, items: Iterable[BwItem], account_name: str = "Bitmerger Cleaned Vault") -> Path:
     """Write an unencrypted 1PUX archive with a single cleaned vault.
 
@@ -551,8 +623,8 @@ def save_1password(path: Path, items: Iterable[BwItem], account_name: str = "Bit
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    account_uuid = str(uuid.uuid4())
-    vault_uuid = str(uuid.uuid4())
+    account_uuid = _onepassword_uuid(upper=True)
+    vault_uuid = _onepassword_uuid()
     export_data = {
         "accounts": [{
             "attrs": {"accountName": account_name, "name": account_name, "uuid": account_uuid, "domain": ""},
@@ -623,7 +695,7 @@ def preflight_merge(bitwarden_path: Path, onepassword_path: Path, threshold: flo
     retained_ambiguous = [candidate for candidate in ambiguous if decision_key(fingerprints, candidate["ids"]) not in suppressed]
     if len(retained_ambiguous) < len(ambiguous):
         warnings.append(f"Suppressed {len(ambiguous) - len(retained_ambiguous)} saved never-suggest candidate(s).")
-    return MergePreflight(input_count=len(items), strict_candidates=len(strict), ambiguous_candidates=retained_ambiguous, passkey_count=passkeys, attachment_count=len(attachment_manifest), vault_names=vault_names, source_fingerprints=fingerprints, warnings=warnings)
+    return MergePreflight(input_count=len(items), strict_candidates=len(strict), ambiguous_candidates=retained_ambiguous, passkey_count=passkeys, attachment_count=len(attachment_manifest), vault_names=vault_names, source_fingerprints=fingerprints, threshold=threshold, warnings=warnings)
 
 
 def _apply_manual_merges(items: list[BwItem], groups: list[list[str]]) -> tuple[list[BwItem], int]:
@@ -679,38 +751,69 @@ def merge_vaults(
     merged_count += manual_merged
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    bw_output, onepassword_output, report_path = expected_merge_outputs(output_dir)
+    bw_output, onepassword_output, csv_output, report_path = expected_merge_outputs(output_dir)
     source_paths = {bitwarden_path.resolve(), onepassword_path.resolve()}
     if onepassword_csv_path:
         source_paths.add(Path(onepassword_csv_path).resolve())
-    collisions = [path for path in (bw_output, onepassword_output, report_path) if path.resolve() in source_paths]
+    collisions = [path for path in (bw_output, onepassword_output, csv_output, report_path) if path.resolve() in source_paths]
     if collisions:
         names = ", ".join(path.name for path in collisions)
         raise VaultFormatError(f"Output path collides with selected source file(s): {names}")
-    existing = [path for path in (bw_output, onepassword_output, report_path) if path.exists()]
+    existing = [path for path in (bw_output, onepassword_output, csv_output, report_path) if path.exists()]
     if existing and not overwrite:
         names = ", ".join(path.name for path in existing)
         raise VaultFormatError(f"Refusing to overwrite existing output(s): {names}")
 
-    # Build and validate every plaintext artifact in a private staging directory
-    # before exposing even one result in the requested output folder.
+    # Build and validate every plaintext artifact in a private staging directory.
+    # Publication uses a rollback transaction so a normal filesystem error cannot
+    # leave a mixture of previous and new output files.
     with tempfile.TemporaryDirectory(prefix=".bitmerger-staging-", dir=output_dir) as stage_name:
         stage = Path(stage_name)
-        staged_bw, staged_1p, staged_report = expected_merge_outputs(stage)
+        staged_bw, staged_1p, staged_csv, staged_report = expected_merge_outputs(stage)
         save_bitwarden(staged_bw, final_items, bitwarden.raw_data)
         save_1password(staged_1p, final_items)
+        save_1password_login_csv(staged_csv, final_items)
+        preservation = {
+            "totp_codes": sum(1 for item in final_items if item.login and item.login.totp),
+            "passkeys": sum(len(item.login.fido2Credentials or []) for item in final_items if item.login),
+            "password_login_entries": sum(1 for item in final_items if item.login and item.login.password),
+            "login_entries": sum(1 for item in final_items if item.login),
+        }
         report = {
             "input_count": len(combined), "output_count": len(final_items), "merged_count": merged_count,
             "candidate_clusters": cluster_count, "threshold": threshold, "warnings": warnings,
             "attachment_manifest": onepassword.raw_data.get("attachment_manifest", []),
             "manual_review_decisions": decision_log or [],
-            "bitwarden_output": str(bw_output), "onepassword_output": str(onepassword_output),
+            "bitwarden_output": str(bw_output), "onepassword_output": str(onepassword_output), "csv_output": str(csv_output),
+            "preservation": preservation,
             "safety": "Only clusters at or above the configured confidence threshold were merged. Conflicting field values are retained in notes.",
         }
         staged_report.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
         json.loads(staged_report.read_text(encoding="utf-8"))
         staged_report.chmod(0o600)
-        staged_bw.replace(bw_output)
-        staged_1p.replace(onepassword_output)
-        staged_report.replace(report_path)
-    return DualMergeResult(bw_output, onepassword_output, report_path, len(combined), len(final_items), merged_count, cluster_count, warnings)
+        staged_outputs = (staged_bw, staged_1p, staged_csv, staged_report)
+        final_outputs = (bw_output, onepassword_output, csv_output, report_path)
+        backups = {target: stage / f".previous-{index}" for index, target in enumerate(final_outputs)}
+        try:
+            for target, backup in backups.items():
+                if target.exists():
+                    target.replace(backup)
+            for staged, target in zip(staged_outputs, final_outputs):
+                staged.replace(target)
+        except OSError:
+            # Remove any newly published output, then restore every prior file.
+            # A later exception still propagates so the caller never mistakes a
+            # restored/failed transaction for a completed merge.
+            for target in final_outputs:
+                if target.exists():
+                    target.unlink()
+            for target, backup in backups.items():
+                if backup.exists():
+                    backup.replace(target)
+            raise
+    return DualMergeResult(
+        bw_output, onepassword_output, csv_output, report_path,
+        len(combined), len(final_items), merged_count, cluster_count,
+        preservation["totp_codes"], preservation["passkeys"], preservation["password_login_entries"],
+        warnings=warnings,
+    )

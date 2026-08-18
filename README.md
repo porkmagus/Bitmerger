@@ -30,7 +30,7 @@ The overview intentionally does not display passwords, TOTP secrets, or SSH priv
 - 1Password vault provenance, tags, archived state, and password history are preserved through the normalized model.
 - Attachment and document payloads cannot be imported into Bitwarden JSON. Their metadata is written to the output audit report as an attachment manifest.
 
-Important: Bitwarden documents JSON as an import format. 1Password documents 1PUX as an unencrypted export/archive format, not as a guaranteed re-import mechanism. Treat generated 1PUX files as portable cleaned archives and use 1Password’s currently supported import/migration path where applicable.
+Bitmerger writes an import-shaped 1PUX archive using 1Password’s public `export.attributes` / `export.data` structure and 1Password-style base32 IDs. It also produces a login CSV with native `OTPAuth` columns. Always keep the Bitwarden JSON output: it is the complete portable artifact, including Bitwarden passkeys.
 
 ## Quick start
 
@@ -110,13 +110,12 @@ Batch-edit name, username, notes, favorite, reprompt, folder, and domain-related
 
 ### Merge Vaults
 
-1. Select a Bitwarden JSON export.
-2. Select a 1Password 1PUX export.
-3. Optionally select a 1Password CSV export for TOTP enrichment.
-4. Select **Preview Safety & Duplicates**.
-5. Review strict candidates, ambiguous candidates, passkeys, attachment manifests, source-vault metadata, and migration warnings.
-6. For ambiguous groups, choose **Merge Selected**, **Keep Separate**, or **Never Suggest**.
-7. Create the outputs.
+1. Select a Bitwarden JSON export and a 1Password 1PUX export.
+2. Optionally select a 1Password CSV export for TOTP enrichment.
+3. Select **1. Preview Safe Merge**.
+4. Read the concise safety summary, then select **2. Create Clean Vaults**.
+
+Only high-confidence duplicates are merged. Ambiguous groups are automatically kept as separate entries—there is no per-item review queue or dropdown. The normal flow is preview, one confirmation, and a completion summary.
 
 By default, Bitmerger creates a unique timestamped run folder so plaintext artifacts from separate runs never collide. The generated run contains:
 
@@ -124,14 +123,11 @@ By default, Bitmerger creates a unique timestamped run folder so plaintext artif
 bitmerger-run-YYYYMMDD-HHMMSS-xxxxxx/
 ├── bitmerger-merged.bitwarden.json
 ├── bitmerger-merged.1password.1pux
+├── bitmerger-merged.1password-logins.csv
 └── bitmerger-merged.report.json
 ```
 
-The audit report contains warnings, attachment metadata, source-output paths, and manual review decisions.
-
-### Persistent review decisions
-
-**Never Suggest** is stored locally in `~/.bitmerger/merge-decisions.json` (or the path supplied in `BITMERGER_DECISION_STORE`). It stores only hashes of source fingerprints and item IDs — never vault content or secrets. A source-file change naturally invalidates an old decision.
+The audit report contains warnings, attachment metadata, source-output paths, and an explicit preservation count for TOTP secrets, passkeys, password-bearing login entries, and all login entries. The CSV is intentionally login-only; CSV has no safe native representation for passkeys, cards, identities, or arbitrary custom fields.
 
 ## Command line
 
@@ -204,4 +200,4 @@ bitmerger/
 
 - Bitwarden JSON exports do not provide a portable attachment-import representation.
 - 1Password desktop CSV and 1PUX exports do not carry 1Password passkeys. Bitmerger preserves Bitwarden passkeys; use 1Password Credential Exchange on iOS/Android for 1Password passkey migration.
-- Generated 1PUX archives are validated against the public export structure but are not promised as a direct 1Password import replacement.
+- The generated 1PUX archive and login CSV carry TOTP material, while the Bitwarden JSON remains the authoritative portable output for Bitwarden passkeys.

@@ -35,7 +35,7 @@ from .fluidity import (
 )
 from .theme import get_theme_manager
 from .vault_formats import (
-    DualMergeResult, MergePreflight, VaultFormatError, decision_key, expected_merge_outputs, load_document, merge_vaults, persist_never_suggest, preflight_merge, source_fingerprint,
+    DualMergeResult, MergePreflight, VaultFormatError, decision_key, expected_merge_outputs, load_document, merge_vaults, preflight_merge, source_fingerprint,
     save_bitwarden, save_1password,
 )
 
@@ -249,7 +249,6 @@ class MainWindow(QMainWindow):
         self._dual_merge_worker: Optional[DualVaultMergeWorker] = None
         self._preflight_worker: Optional[PreflightWorker] = None
         self._latest_preflight: Optional[MergePreflight] = None
-        self._review_decisions: list[dict[str, Any]] = []
 
         self._build_ui()
         self._apply_fluidity()
@@ -1195,33 +1194,22 @@ class MainWindow(QMainWindow):
         output_layout.addWidget(self._dual_versioned_dir)
         layout.addWidget(output)
 
-        self._dual_preview_button = QPushButton("Preview Safety & Duplicates")
+        self._dual_preview_button = QPushButton("1. Preview Safe Merge")
         self._dual_preview_button.clicked.connect(self._on_dual_preflight)
         layout.addWidget(self._dual_preview_button)
 
-        self._dual_merge_button = QPushButton("Merge and Create Both Vaults")
-        self._dual_merge_button.setAccessibleName("Merge selected vaults")
-        self._dual_merge_button.setToolTip("Writes a Bitwarden JSON import file, a 1Password 1PUX archive, and an audit report.")
+        self._dual_merge_button = QPushButton("2. Create Clean Vaults")
+        self._dual_merge_button.setAccessibleName("Create clean vaults")
+        self._dual_merge_button.setToolTip("After preview, writes Bitwarden JSON, import-shaped 1Password 1PUX, a login CSV, and an audit report.")
         self._dual_merge_button.clicked.connect(self._on_dual_merge)
+        self._dual_merge_button.setEnabled(False)
+        self._dual_threshold.valueChanged.connect(self._invalidate_dual_preflight)
         layout.addWidget(self._dual_merge_button)
 
         self._dual_result = QTextEdit()
         self._dual_result.setReadOnly(True)
         self._dual_result.setPlaceholderText("Output paths and any format-preservation warnings will appear here.")
         layout.addWidget(self._dual_result, 1)
-        review_row = QHBoxLayout()
-        self._review_combo = QComboBox()
-        self._review_combo.setPlaceholderText("Run a preflight to load ambiguous candidates")
-        review_row.addWidget(self._review_combo, 1)
-        merge_choice = QPushButton("Merge Selected")
-        merge_choice.clicked.connect(lambda: self._record_review_decision("merge"))
-        keep_choice = QPushButton("Keep Separate")
-        keep_choice.clicked.connect(lambda: self._record_review_decision("keep"))
-        never_choice = QPushButton("Never Suggest")
-        never_choice.clicked.connect(lambda: self._record_review_decision("never"))
-        for button in (merge_choice, keep_choice, never_choice):
-            review_row.addWidget(button)
-        layout.addLayout(review_row)
         return widget
 
     def _choose_dual_bitwarden(self) -> None:
@@ -1256,17 +1244,15 @@ class MainWindow(QMainWindow):
         for control in self._dual_controls + self._dual_browse_buttons:
             control.setEnabled(not running)
 
-    def _record_review_decision(self, action: str) -> None:
-        candidate = self._review_combo.currentData()
-        if not isinstance(candidate, dict):
+    def _invalidate_dual_preflight(self, _threshold: float) -> None:
+        """Require a fresh preview whenever merge confidence changes."""
+        if self._latest_preflight is None:
             return
-        entry = {"action": action, "ids": candidate.get("ids", []), "names": candidate.get("names", []), "confidence": candidate.get("confidence")}
-        self._review_decisions = [item for item in self._review_decisions if item.get("ids") != entry["ids"]]
-        self._review_decisions.append(entry)
-        if action == "never" and self._latest_preflight:
-            persist_never_suggest(self._latest_preflight.source_fingerprints, entry["ids"])
-            self._review_combo.removeItem(self._review_combo.currentIndex())
-        self._status.setText(f"Review decision recorded: {action} selected candidate")
+        self._latest_preflight = None
+        self._dual_merge_button.setEnabled(False)
+        self._status.setText("Preview invalidated — review the new confidence threshold before merging")
+        self._dual_result.setPlainText("Confidence changed. Run '1. Preview Safe Merge' again before creating outputs.")
+
     def _on_dual_preflight(self) -> None:
         bw = Path(self._dual_bw_path.text()) if self._dual_bw_path.text() else None
         one = Path(self._dual_1p_path.text()) if self._dual_1p_path.text() else None
@@ -1286,21 +1272,30 @@ class MainWindow(QMainWindow):
         if not isinstance(result, MergePreflight):
             self._on_dual_preflight_error("Unexpected preflight result")
             return
+        if abs(result.threshold - self._dual_threshold.value()) > 0.0001:
+            self._latest_preflight = None
+            self._dual_merge_button.setEnabled(False)
+            self._status.setText("Preview invalidated — confidence changed during analysis")
+            self._dual_result.setPlainText("Confidence changed during preview. Run '1. Preview Safe Merge' again before creating outputs.")
+            return
         self._latest_preflight = result
-        self._review_decisions = []
-        self._review_combo.clear()
-        for index, candidate in enumerate(result.ambiguous_candidates, start=1):
-            self._review_combo.addItem(f"{index}. {candidate['confidence']:.0%} — {' / '.join(candidate['names'])}", candidate)
-        lines = [f"Preflight: {result.input_count} input items", f"Safe automatic merges at current threshold: {result.strict_candidates}", f"Ambiguous candidates kept separate: {len(result.ambiguous_candidates)}", f"Bitwarden passkeys retained: {result.passkey_count}", f"Attachment/document manifest entries: {result.attachment_count}", f"1Password vaults: {', '.join(result.vault_names) or '(none)'}"]
+        self._dual_merge_button.setEnabled(True)
+        lines = [
+            "Ready for a safe one-click merge.",
+            f"{result.input_count} source items • {result.strict_candidates} automatic merges • {len(result.ambiguous_candidates)} ambiguous item groups kept separate",
+            f"{result.passkey_count} Bitwarden passkey(s) retained • {result.attachment_count} attachment/document reference(s) recorded",
+            f"1Password vaults: {', '.join(result.vault_names) or '(none)'}",
+        ]
         if result.ambiguous_candidates:
-            lines.extend(["", "Review queue (kept separate):", *[f"• {entry['confidence']:.0%} — {entry['size']} items: {' / '.join(entry['names'])}" for entry in result.ambiguous_candidates[:20]]])
+            lines.extend(["", "Ambiguous groups are deliberately preserved as separate entries — no tedious per-item decisions required.", *[f"• {entry['confidence']:.0%} — {entry['size']} items: {' / '.join(entry['names'])}" for entry in result.ambiguous_candidates[:8]]])
         if result.warnings:
             lines.extend(["", "Fidelity and migration notes:", *[f"• {warning}" for warning in result.warnings]])
         self._dual_result.setPlainText("\n".join(lines))
-        self._status.setText("Preflight complete — review notes, then create outputs when ready")
+        self._status.setText("Preview complete — create the clean vaults when ready")
 
     def _on_dual_preflight_error(self, message: str) -> None:
         self._dual_preview_button.setEnabled(True)
+        self._dual_merge_button.setEnabled(False)
         self._status.setText("Preflight failed")
         self._dual_result.setPlainText(f"Preflight failed:\n{message}")
         QMessageBox.critical(self, "Merge Preflight Failed", message)
@@ -1317,6 +1312,13 @@ class MainWindow(QMainWindow):
             return
         if csv_path and not csv_path.is_file():
             QMessageBox.warning(self, "Missing CSV", "The selected optional 1Password CSV file no longer exists.")
+            return
+        if not self._latest_preflight:
+            QMessageBox.warning(self, "Preview required", "Run '1. Preview Safe Merge' before creating outputs.")
+            return
+        if abs(self._latest_preflight.threshold - self._dual_threshold.value()) > 0.0001:
+            self._invalidate_dual_preflight(self._dual_threshold.value())
+            QMessageBox.warning(self, "Preview required", "The confidence threshold changed. Run '1. Preview Safe Merge' again before creating outputs.")
             return
         if self._latest_preflight:
             current = {str(path): source_fingerprint(path) for path in (bitwarden_path, onepassword_path) if path}
@@ -1356,8 +1358,7 @@ class MainWindow(QMainWindow):
         self._set_dual_merge_running(True)
         self._progress_smooth.show()
         self._status.setText("Merging Bitwarden and 1Password vaults…")
-        manual_groups = [entry["ids"] for entry in self._review_decisions if entry.get("action") == "merge"]
-        self._dual_merge_worker = DualVaultMergeWorker(bitwarden_path, onepassword_path, output_dir, self._dual_threshold.value(), onepassword_csv_path=csv_path, manual_merge_groups=manual_groups, decision_log=self._review_decisions, overwrite=overwrite)
+        self._dual_merge_worker = DualVaultMergeWorker(bitwarden_path, onepassword_path, output_dir, self._dual_threshold.value(), onepassword_csv_path=csv_path, overwrite=overwrite)
         self._dual_merge_worker.finished.connect(self._on_dual_merge_finished)
         self._dual_merge_worker.error.connect(self._on_dual_merge_error)
         self._dual_merge_worker.start()
@@ -1369,18 +1370,20 @@ class MainWindow(QMainWindow):
             self._on_dual_merge_error("Unexpected merge result")
             return
         lines = [
-            f"Merged {result.merged_count} safe duplicate(s) across {result.input_count} input items.",
-            f"Final item count: {result.output_count}",
+            f"Merged {result.merged_count} safe duplicate(s) across {result.input_count} input items into {result.output_count} final entries.",
+            f"Kept {result.password_login_count} password-bearing login entr{'y' if result.password_login_count == 1 else 'ies'} together with their accounts.",
+            f"Preserved {result.totp_count} TOTP secret(s) and {result.passkey_count} Bitwarden passkey(s).",
             "",
             f"Bitwarden JSON: {result.bitwarden_output}",
             f"1Password 1PUX: {result.onepassword_output}",
+            f"1Password login CSV: {result.csv_output}",
             f"Audit report: {result.report_output}",
         ]
         if result.warnings:
             lines.extend(["", "Format notes:", *[f"• {warning}" for warning in result.warnings]])
         self._dual_result.setPlainText("\n".join(lines))
-        self._status.setText(f"Created both vault outputs ({result.output_count} items)")
-        QMessageBox.information(self, "Merged Vaults Created", "\n".join(lines[:6]))
+        self._status.setText(f"Created clean vault outputs ({result.output_count} items)")
+        QMessageBox.information(self, "Clean Vaults Created", "\n".join(lines[:8]))
 
     def _on_dual_merge_error(self, message: str) -> None:
         self._progress_smooth.hide()

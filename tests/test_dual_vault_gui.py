@@ -42,6 +42,18 @@ def test_merge_tab_runs_end_to_end(qtbot, monkeypatch, dual_sources):
     window._dual_bw_path.setText(str(bitwarden_path))
     window._dual_1p_path.setText(str(onepassword_path))
     window._dual_output_dir.setText(str(output_dir))
+    assert not window._dual_merge_button.isEnabled()
+    assert not hasattr(window, "_review_combo")
+    window._on_dual_preflight()
+    qtbot.waitUntil(lambda: window._latest_preflight is not None, timeout=5000)
+    qtbot.waitUntil(window._dual_merge_button.isEnabled, timeout=5000)
+    assert "Ready for a safe one-click merge" in window._dual_result.toPlainText()
+    window._dual_threshold.setValue(0.96)
+    assert not window._dual_merge_button.isEnabled()
+    assert window._latest_preflight is None
+    window._dual_threshold.setValue(0.95)
+    window._on_dual_preflight()
+    qtbot.waitUntil(window._dual_merge_button.isEnabled, timeout=5000)
     window._on_dual_merge()
 
     qtbot.waitUntil(lambda: (output_dir / "bitmerger-merged.report.json").exists(), timeout=5000)
@@ -65,6 +77,8 @@ def test_merge_tab_uses_optional_csv_for_totp_enrichment(qtbot, monkeypatch, dua
     window._dual_1p_path.setText(str(onepassword_path))
     window._dual_csv_path.setText(str(csv_path))
     window._dual_output_dir.setText(str(output_dir))
+    window._on_dual_preflight()
+    qtbot.waitUntil(window._dual_merge_button.isEnabled, timeout=5000)
     window._on_dual_merge()
     qtbot.waitUntil(lambda: (output_dir / "bitmerger-merged.report.json").exists(), timeout=5000)
     qtbot.waitUntil(window._dual_merge_button.isEnabled, timeout=5000)
@@ -85,6 +99,8 @@ def test_merge_tab_refuses_existing_output_without_replace_confirmation(qtbot, m
     window._dual_bw_path.setText(str(bitwarden_path))
     window._dual_1p_path.setText(str(onepassword_path))
     window._dual_output_dir.setText(str(output_dir))
+    window._on_dual_preflight()
+    qtbot.waitUntil(window._dual_merge_button.isEnabled, timeout=5000)
     window._on_dual_merge()
 
     assert (output_dir / "bitmerger-merged.bitwarden.json").read_text(encoding="utf-8") == "keep-me"

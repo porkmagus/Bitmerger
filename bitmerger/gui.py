@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QLineEdit, QCheckBox, QDoubleSpinBox,
     QFileDialog, QMessageBox, QProgressBar, QGroupBox, QComboBox, QTableWidget,
-    QTableWidgetItem, QTextEdit, QHeaderView,
+    QTableWidgetItem, QTextEdit, QHeaderView, QTabWidget,
 )
 from PySide6.QtGui import QFont, QIcon
 
@@ -30,7 +30,7 @@ from .core import (
     apply_batch_edit, create_batch_edit_log, BatchEditRecord,
 )
 from .fluidity import (
-    SmoothVisibility, FadeTabWidget, ButtonPulse, StatusPulse,
+    SmoothVisibility, ButtonPulse, StatusPulse,
     CheckboxPulse, HoverHighlight, animate_table_refresh,
 )
 from .vault_formats import (
@@ -280,8 +280,9 @@ class MainWindow(QMainWindow):
         self._stats_label.setStyleSheet("font-size: 12px;")
         layout.addWidget(self._stats_label)
 
-        # Tabs — use FadeTabWidget for smooth transitions
-        self._tabs = FadeTabWidget()
+        # Native tabs avoid a Windows Qt repaint defect in QTableHeaderView
+        # triggered by opacity effects on pages containing tables.
+        self._tabs = QTabWidget()
         layout.addWidget(self._tabs, 1)
 
         self._tabs.addTab(self._build_overview_tab(), "Vault Overview")

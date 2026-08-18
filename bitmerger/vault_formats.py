@@ -46,6 +46,7 @@ _OUTPUT_FILENAMES = (
     "bitmerger-merged.bitwarden.json",
     "bitmerger-merged.1password.1pux",
     "bitmerger-merged.1password-logins.csv",
+    "bitmerger-passkey-recovery.bitwarden.json",
     "bitmerger-merged.report.json",
 )
 _MAX_1PUX_MEMBERS = 10_000
@@ -92,6 +93,7 @@ class DualMergeResult:
     bitwarden_output: Path
     onepassword_output: Path
     csv_output: Path
+    passkey_recovery_output: Path
     report_output: Path
     input_count: int
     output_count: int
@@ -104,7 +106,7 @@ class DualMergeResult:
     warnings: list[str] = field(default_factory=list)
 
 
-def expected_merge_outputs(output_dir: Path) -> tuple[Path, Path, Path, Path]:
+def expected_merge_outputs(output_dir: Path) -> tuple[Path, Path, Path, Path, Path]:
     """Return the fixed artifact names produced by a dual-vault merge."""
     directory = Path(output_dir)
     return (
@@ -112,6 +114,7 @@ def expected_merge_outputs(output_dir: Path) -> tuple[Path, Path, Path, Path]:
         directory / _OUTPUT_FILENAMES[1],
         directory / _OUTPUT_FILENAMES[2],
         directory / _OUTPUT_FILENAMES[3],
+        directory / _OUTPUT_FILENAMES[4],
     )
 
 
@@ -550,6 +553,23 @@ def _item_to_onepassword(item: BwItem) -> dict[str, Any]:
     }
 
 
+def _passkey_fingerprints(items: Iterable[BwItem]) -> list[str]:
+    """Return stable, non-reversible identifiers for complete FIDO credentials."""
+    fingerprints: list[str] = []
+    for item in items:
+        if not item.login:
+            continue
+        for credential in item.login.fido2Credentials or []:
+            encoded = json.dumps(credential, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+            fingerprints.append(hashlib.sha256(encoded).hexdigest())
+    return sorted(fingerprints)
+
+
+def _passkey_items(items: Iterable[BwItem]) -> list[BwItem]:
+    """Return deep-copied final items that carry one or more passkeys."""
+    return [copy.deepcopy(item) for item in items if item.login and item.login.fido2Credentials]
+
+
 def save_bitwarden(path: Path, items: Iterable[BwItem], source_data: dict[str, Any] | None = None) -> Path:
     """Write an atomic Bitwarden JSON export without Bitmerger-only metadata."""
     data = copy.deepcopy(source_data or {})
@@ -751,15 +771,15 @@ def merge_vaults(
     merged_count += manual_merged
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    bw_output, onepassword_output, csv_output, report_path = expected_merge_outputs(output_dir)
+    bw_output, onepassword_output, csv_output, passkey_recovery_output, report_path = expected_merge_outputs(output_dir)
     source_paths = {bitwarden_path.resolve(), onepassword_path.resolve()}
     if onepassword_csv_path:
         source_paths.add(Path(onepassword_csv_path).resolve())
-    collisions = [path for path in (bw_output, onepassword_output, csv_output, report_path) if path.resolve() in source_paths]
+    collisions = [path for path in (bw_output, onepassword_output, csv_output, passkey_recovery_output, report_path) if path.resolve() in source_paths]
     if collisions:
         names = ", ".join(path.name for path in collisions)
         raise VaultFormatError(f"Output path collides with selected source file(s): {names}")
-    existing = [path for path in (bw_output, onepassword_output, csv_output, report_path) if path.exists()]
+    existing = [path for path in (bw_output, onepassword_output, csv_output, passkey_recovery_output, report_path) if path.exists()]
     if existing and not overwrite:
         names = ", ".join(path.name for path in existing)
         raise VaultFormatError(f"Refusing to overwrite existing output(s): {names}")
@@ -769,10 +789,19 @@ def merge_vaults(
     # leave a mixture of previous and new output files.
     with tempfile.TemporaryDirectory(prefix=".bitmerger-staging-", dir=output_dir) as stage_name:
         stage = Path(stage_name)
-        staged_bw, staged_1p, staged_csv, staged_report = expected_merge_outputs(stage)
+        staged_bw, staged_1p, staged_csv, staged_passkey_recovery, staged_report = expected_merge_outputs(stage)
+        passkey_items = _passkey_items(final_items)
+        passkey_fingerprints = _passkey_fingerprints(passkey_items)
         save_bitwarden(staged_bw, final_items, bitwarden.raw_data)
         save_1password(staged_1p, final_items)
         save_1password_login_csv(staged_csv, final_items)
+        # A Bitwarden-compatible recovery subset is the lossless passkey
+        # artifact. Desktop 1PUX and CSV do not have a passkey transport.
+        save_bitwarden(staged_passkey_recovery, passkey_items)
+        recovered = json.loads(staged_passkey_recovery.read_text(encoding="utf-8"))
+        recovered_items = [BwItem.from_dict(item) for item in recovered.get("items", []) if isinstance(item, dict)]
+        if _passkey_fingerprints(recovered_items) != passkey_fingerprints:
+            raise VaultFormatError("Passkey recovery artifact failed integrity verification")
         preservation = {
             "totp_codes": sum(1 for item in final_items if item.login and item.login.totp),
             "passkeys": sum(len(item.login.fido2Credentials or []) for item in final_items if item.login),
@@ -785,14 +814,22 @@ def merge_vaults(
             "attachment_manifest": onepassword.raw_data.get("attachment_manifest", []),
             "manual_review_decisions": decision_log or [],
             "bitwarden_output": str(bw_output), "onepassword_output": str(onepassword_output), "csv_output": str(csv_output),
+            "passkey_migration": {
+                "status": "manual_passkey_transfer_required" if passkey_fingerprints else "not_applicable",
+                "credential_count": len(passkey_fingerprints),
+                "credential_fingerprints": passkey_fingerprints,
+                "recovery_artifact": str(passkey_recovery_output),
+                "desktop_1pux_and_csv": "do_not_transport_passkeys",
+                "next_step": "Desktop 1Password cannot import passkeys from a file. Use mobile Credential Exchange (CXP), or re-enroll each site from a desktop session authenticated with the preserved source passkey, then verify this count before deleting recovery artifacts.",
+            },
             "preservation": preservation,
             "safety": "Only clusters at or above the configured confidence threshold were merged. Conflicting field values are retained in notes.",
         }
         staged_report.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
         json.loads(staged_report.read_text(encoding="utf-8"))
         staged_report.chmod(0o600)
-        staged_outputs = (staged_bw, staged_1p, staged_csv, staged_report)
-        final_outputs = (bw_output, onepassword_output, csv_output, report_path)
+        staged_outputs = (staged_bw, staged_1p, staged_csv, staged_passkey_recovery, staged_report)
+        final_outputs = (bw_output, onepassword_output, csv_output, passkey_recovery_output, report_path)
         backups = {target: stage / f".previous-{index}" for index, target in enumerate(final_outputs)}
         try:
             for target, backup in backups.items():
@@ -812,7 +849,7 @@ def merge_vaults(
                     backup.replace(target)
             raise
     return DualMergeResult(
-        bw_output, onepassword_output, csv_output, report_path,
+        bw_output, onepassword_output, csv_output, passkey_recovery_output, report_path,
         len(combined), len(final_items), merged_count, cluster_count,
         preservation["totp_codes"], preservation["passkeys"], preservation["password_login_entries"],
         warnings=warnings,

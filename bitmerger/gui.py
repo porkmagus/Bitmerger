@@ -6,6 +6,7 @@ Usage:
     python -m bitmerger --gui
 """
 
+import json
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -16,7 +17,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QLineEdit, QCheckBox, QDoubleSpinBox,
     QFileDialog, QMessageBox, QProgressBar, QGroupBox, QComboBox, QTableWidget,
-    QTableWidgetItem, QTextEdit, QHeaderView, QTabWidget,
+    QTableWidgetItem, QTextEdit, QHeaderView, QTabWidget, QDialog, QDialogButtonBox,
 )
 from PySide6.QtGui import QFont, QIcon
 
@@ -34,6 +35,7 @@ from .fluidity import (
     CheckboxPulse, animate_table_refresh,
 )
 from .theme import get_theme_manager
+from .item_editor import ItemEditor
 from .vault_formats import (
     DualMergeResult, MergePreflight, VaultFormatError, decision_key, expected_merge_outputs, load_document, merge_vaults, preflight_merge, source_fingerprint,
     save_bitwarden, save_1password,
@@ -331,6 +333,8 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(w)
 
         self._overview_table = VaultTable()
+        self._overview_table.itemDoubleClicked.connect(self._on_overview_item_double_clicked)
+        self._overview_table.setToolTip("Double-click any row to inspect every field, credential, custom value, history entry, and passkey metadata.")
         layout.addWidget(self._overview_table)
 
         btn_refresh = QPushButton("Refresh")
@@ -338,6 +342,45 @@ class MainWindow(QMainWindow):
         layout.addWidget(btn_refresh)
 
         return w
+
+    def _on_overview_item_double_clicked(self, cell: QTableWidgetItem) -> None:
+        row = cell.row()
+        id_cell = self._overview_table.item(row, 8)
+        if id_cell is None:
+            return
+        item = next((candidate for candidate in self._items if candidate.id == id_cell.text()), None)
+        if item:
+            self._show_item_detail(item)
+
+    def _show_item_detail(self, item: BwItem) -> None:
+        """Open one editable, complete vault record without exposing it in the grid."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Vault Entry — {item.name}")
+        dialog.setMinimumSize(760, 640)
+        layout = QVBoxLayout(dialog)
+        summary = QLabel("All stored fields are available below. Secrets remain masked until you deliberately reveal them.")
+        summary.setWordWrap(True)
+        layout.addWidget(summary)
+        if item.login and item.login.fido2Credentials:
+            passkeys = QTextEdit()
+            passkeys.setReadOnly(True)
+            passkeys.setMaximumHeight(120)
+            passkeys.setPlainText(json.dumps(item.login.fido2Credentials, indent=2, ensure_ascii=False))
+            passkey_group = QGroupBox(f"Associated passkeys ({len(item.login.fido2Credentials)})")
+            passkey_layout = QVBoxLayout(passkey_group)
+            passkey_layout.addWidget(passkeys)
+            layout.addWidget(passkey_group)
+        editor = ItemEditor(dialog)
+        editor.load_item(item, self._items)
+        layout.addWidget(editor, 1)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(dialog.reject)
+        buttons.accepted.connect(dialog.accept)
+        layout.addWidget(buttons)
+        editor.item_changed.connect(lambda: self._overview_table.set_items(self._items))
+        self._item_detail_dialog = dialog
+        self._item_detail_editor = editor
+        dialog.show()
 
     def _build_dedup_tab(self) -> QWidget:
         w = QWidget()
@@ -1120,6 +1163,10 @@ class MainWindow(QMainWindow):
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
+        guide_button = QPushButton("Open Migration Walkthrough")
+        guide_button.setToolTip("Choose the safe, verified route for Bitwarden → 1Password or 1Password → Bitwarden.")
+        guide_button.clicked.connect(self._show_migration_walkthrough)
+        layout.addWidget(guide_button)
         plaintext_note = QLabel(
             "Security note: exports and generated files contain plaintext secrets. Choose a private local folder; Bitmerger restricts new output files to the current user where supported."
         )
@@ -1211,6 +1258,33 @@ class MainWindow(QMainWindow):
         self._dual_result.setPlaceholderText("Output paths and any format-preservation warnings will appear here.")
         layout.addWidget(self._dual_result, 1)
         return widget
+
+    def _show_migration_walkthrough(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Safe Migration Walkthrough")
+        dialog.setMinimumSize(700, 500)
+        layout = QVBoxLayout(dialog)
+        guide = QTextEdit()
+        guide.setReadOnly(True)
+        guide.setPlainText(
+            "BITWARDEN → 1PASSWORD\n\n"
+            "1. Run the safe merge and keep every generated artifact private.\n"
+            "2. Import the 1PUX for desktop-portable entries.\n"
+            "3. If the audit reports passkeys, import the passkey-recovery Bitwarden JSON into a temporary Bitwarden vault, sync it to Bitwarden mobile, then use CXP into 1Password. Without mobile CXP, re-enroll each site using the original passkey.\n"
+            "4. Compare audit counts and test every passkey before deleting anything.\n\n"
+            "1PASSWORD → BITWARDEN\n\n"
+            "1. Import the 1PUX into Bitmerger and export the merged Bitwarden JSON.\n"
+            "2. Import that JSON into Bitwarden for passwords, cards, notes, identities, TOTP, and SSH data.\n"
+            "3. 1PUX omits passkeys. In 1Password desktop search =passkey, create a checklist of those entries, then re-enroll each account in Bitwarden or use CXP where available.\n"
+            "4. Double-click any Vault Overview row to inspect all fields before deciding an entry is complete.\n\n"
+            "Never delete a source vault or plaintext recovery artifact until counts, individual sign-ins, and all manual passkey work are verified."
+        )
+        layout.addWidget(guide, 1)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        self._migration_walkthrough_dialog = dialog
+        dialog.show()
 
     def _choose_dual_bitwarden(self) -> None:
         filename, _ = QFileDialog.getOpenFileName(self, "Choose Bitwarden JSON Export", "", "Bitwarden JSON (*.json)")
@@ -1347,7 +1421,7 @@ class MainWindow(QMainWindow):
         reply = QMessageBox.question(
             self,
             "Create merged vaults?",
-            "Bitmerger will create two new plaintext export files and an audit report in the output folder. "
+            "Bitmerger will create Bitwarden JSON, 1Password 1PUX, a login CSV, a passkey recovery JSON, and an audit report in the output folder. "
             "The two selected source files will not be changed. Continue?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
@@ -1377,8 +1451,14 @@ class MainWindow(QMainWindow):
             f"Bitwarden JSON: {result.bitwarden_output}",
             f"1Password 1PUX: {result.onepassword_output}",
             f"1Password login CSV: {result.csv_output}",
+            f"Passkey recovery JSON: {result.passkey_recovery_output}",
             f"Audit report: {result.report_output}",
         ]
+        if result.passkey_count:
+            lines.extend([
+                "",
+                "Desktop 1PUX and CSV cannot import passkeys. The recovery JSON preserves every passkey; use mobile CXP or re-enroll each site in 1Password from a desktop session, then verify the audit count before deletion.",
+            ])
         if result.warnings:
             lines.extend(["", "Format notes:", *[f"• {warning}" for warning in result.warnings]])
         self._dual_result.setPlainText("\n".join(lines))

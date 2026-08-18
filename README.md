@@ -124,10 +124,17 @@ bitmerger-run-YYYYMMDD-HHMMSS-xxxxxx/
 ├── bitmerger-merged.bitwarden.json
 ├── bitmerger-merged.1password.1pux
 ├── bitmerger-merged.1password-logins.csv
+├── bitmerger-passkey-recovery.bitwarden.json
 └── bitmerger-merged.report.json
 ```
 
-The audit report contains warnings, attachment metadata, source-output paths, and an explicit preservation count for TOTP secrets, passkeys, password-bearing login entries, and all login entries. The CSV is intentionally login-only; CSV has no safe native representation for passkeys, cards, identities, or arbitrary custom fields.
+The audit report contains warnings, attachment metadata, source-output paths, and explicit preservation counts for TOTP secrets, passkeys, password-bearing login entries, and all login entries. The CSV is intentionally login-only; CSV has no safe native representation for passkeys, cards, identities, or arbitrary custom fields.
+
+### Passkeys: verified preservation, separate transfer
+
+Bitmerger never puts passkeys into desktop 1PUX or CSV because those formats do not transport them. It writes `bitmerger-passkey-recovery.bitwarden.json`, a Bitwarden-compatible subset containing each final passkey-bearing entry, and verifies a SHA-256 fingerprint for every complete passkey credential before publication. The report marks a passkey-bearing run as `manual_passkey_transfer_required`.
+
+Desktop 1Password cannot import passkeys from a file. To finish a migration, use direct Credential Exchange (CXP) in compatible mobile apps **or** use the existing Bitwarden passkey to sign in on each website and create a new passkey saved in 1Password. Then compare the report’s passkey count and test every migrated passkey before deleting the source vault or any recovery artifact. The recovery JSON is a lossless Bitwarden recovery file, **not** an import file for 1Password. See `docs/PASSKEY-MIGRATION.md` for the complete verified procedure.
 
 ## Command line
 

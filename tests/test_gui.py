@@ -90,6 +90,16 @@ def tmp_vault(tmp_path: Path):
     return vault_file
 
 
+def test_double_click_detail_dialog_loads_full_item(qtbot, tmp_vault):
+    window = MainWindow()
+    qtbot.add_widget(window)
+    window._load_vault(tmp_vault)
+    window._show_item_detail(window._items[0])
+    assert window._item_detail_dialog.isVisible()
+    assert window._item_detail_editor.current_item() is window._items[0]
+    window._item_detail_dialog.close()
+
+
 class TestMainWindowLaunch:
     """Test that the main window launches and basic UI is present."""
 
